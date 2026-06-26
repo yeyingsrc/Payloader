@@ -13161,7 +13161,7 @@ const trySmartModDecode = (value: string): string | null => {
 const smartDecode = async (value: string): Promise<string> => {
   // Strip common CTF output noise prefixes: "Flag: ", "[*] Encrypted: ", ">>> cipher =", etc.
   const stripped = value
-    .replace(/^\s*\[\*\]\s*/i, '')                                // [*] tool output prefix
+    .replace(/^\s*\[[\*\+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
     .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|binary|octal|ascii|encoded|ciphered)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
     .trim();
