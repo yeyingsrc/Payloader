@@ -10973,6 +10973,11 @@ const smartCiphertextSource = (value: string) => {
 
 const parseSmartCipherBytes = (source: string, labelled = false) => {
   const text = cleanSymmetricFieldValue(source);
+  // Python bytes literal: b'\x1b\x37...' or b"..."
+  const pyBytesMatch = text.trim().match(/^(?:br|rb|b)\s*(['"])([\s\S]*)\1$/i);
+  if (pyBytesMatch) {
+    try { return { bytes: parsePythonBytesLiteral(text.trim()), encoding: 'python-bytes' }; } catch { /* fall through */ }
+  }
   // JSON integer array: [91, 241, 101, ...] — common in CTF Python challenge scripts
   const arrayMatch = text.trim().match(/^\[[\d,\s]+\]$/);
   if (arrayMatch) {
