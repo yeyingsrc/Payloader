@@ -11478,7 +11478,7 @@ const trySmartClassicDecrypt = (value: string) => {
   ].sort((left, right) => right.score - left.score);
   const best = candidates[0];
   const originalScore = smartTextScore(text);
-  const confident = /flag\{|ctf\{|picoctf\{|htb\{|thm\{|ductf\{|corctf\{|dice\{|wctf\{|utflag\{|sekai\{|crypto\{|lactf\{|nahamcon\{|hsctf\{|justctf\{|b01lers\{|wanictf\{/i.test(best.text) || best.score - originalScore > 10;
+  const confident = /flag\{|ctf\{|picoctf\{|htb\{|thm\{|ductf\{|corctf\{|dice\{|wctf\{|utflag\{|sekai\{|crypto\{|lactf\{|nahamcon\{|hsctf\{|justctf\{|b01lers\{|wanictf\{/i.test(best.text) || best.score - originalScore > 8;
   if (!confident) return null;
   return `智能识别: classic cipher candidates\n\n${JSON.stringify({
     best,
@@ -13244,7 +13244,9 @@ const smartDecode = async (value: string): Promise<string> => {
       /&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(current) ? tryDecode('HTML Entity', current, htmlDecode) : null,
       /\\u\{?[0-9a-fA-F]{2,}/.test(current) || /\\x[0-9a-fA-F]{2}/.test(current) ? tryDecode('Unicode/Hex Escape', current, unicodeDecode) : null,
       /\+[A-Za-z0-9/]+-|\+-/.test(current) ? tryDecode('UTF-7', current, utf7Decode) : null,
-      /^[0-9a-fA-Fx\\\s]+$/.test(current) && current.replace(/[^0-9a-fA-F]/g, '').length >= 4 ? tryDecode('Hex', current, decoded => utf8Decoder.decode(hexToBytes(decoded))) : null,
+      /^[0-9a-fA-Fx\\\s]+$/.test(current) && current.replace(/[^0-9a-fA-F]/g, '').length >= 4
+        && !/^(\d{1,2}[\s,;|/.\-]+)*\d{1,2}$/.test(current.trim())
+        ? tryDecode('Hex', current, decoded => utf8Decoder.decode(hexToBytes(decoded))) : null,
       // Space/comma-separated 0x-prefixed hex bytes: 0x70 0x69 ... or 0x70, 0x69, ...
       /(?:0x[0-9a-fA-F]{1,2}[\s,]+){2,}0x[0-9a-fA-F]{1,2}/.test(current) ? tryDecode('0x-Hex bytes', current, v => utf8Decoder.decode(hexToBytes(v.replace(/[\s,]+/g, '').replace(/0x/gi, '')))) : null,
       /^[A-Za-z0-9+/_=-\s]+$/.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base64', current, base64ToText) : null,
