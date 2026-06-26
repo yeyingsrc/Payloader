@@ -11081,6 +11081,7 @@ const trySmartXorDecrypt = (value: string) => {
   const parsed = parseSmartCipherBytes(decimalArrayBytes ? `[${Array.from(decimalArrayBytes).join(',')}]` : source, labelled || /\bxor\b/.test(lowered) || Boolean(decimalArrayBytes));
   if (!parsed) return null;
   const bytes = parsed.bytes;
+  if (bytes.length < 4) return null;
   const candidates: Array<{ method: string; key: string; score: number; text: string }> = [];
 
   if (/\bxor\b/.test(lowered) && fields.key) {
