@@ -13168,7 +13168,7 @@ const smartDecode = async (value: string): Promise<string> => {
   const stripped = value
     .replace(/^\s*\[[\*\+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
-    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature|nonce|iv|salt|seed)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
+    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature|nonce|iv|salt|seed|pt|value|flag_enc|flag_hex)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
     .trim();
   const input = stripped !== value.trim() ? stripped : value;
   const smartRabin = trySmartRabinDecrypt(input);
