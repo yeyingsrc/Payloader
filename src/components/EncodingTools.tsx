@@ -13168,7 +13168,7 @@ const smartDecode = async (value: string): Promise<string> => {
   const stripped = value
     .replace(/^\s*\[[\*\+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
-    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|binary|octal|ascii|encoded|ciphered|secret|text|message|data)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
+    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
     .trim();
   const input = stripped !== value.trim() ? stripped : value;
   const smartRabin = trySmartRabinDecrypt(input);
@@ -13256,8 +13256,8 @@ const smartDecode = async (value: string): Promise<string> => {
       /(?:0x[0-9a-fA-F]{1,2}[\s,]+){1,}0x[0-9a-fA-F]{1,2}/.test(current) ? tryDecode('0x-Hex bytes', current, v => utf8Decoder.decode(hexToBytes(v.replace(/[\s,]+/g, '').replace(/0x/gi, '')))) : null,
       /^[A-Za-z0-9+/_=-\s]+$/.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base64', current, base64ToText) : null,
       /^[A-Z2-7=\s]+$/i.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base32', current, decodeBase32) : null,
-      /^[0-9A-V=\s]+$/i.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base32hex', current, decoded => decodeBase32(decoded, 'hex')) : null,
-      /^[0-9A-HJ-KM-NP-TV-Z=\-\s]+$/i.test(current) && current.replace(/[\s-]/g, '').length >= 8 ? tryDecode('Crockford Base32', current, decoded => decodeBase32(decoded, 'decimal')) : null,
+      /^[0-9A-V=\s]+$/i.test(current) && current.replace(/\s+/g, '').length >= 8 && /[G-Vg-v]/.test(current) ? tryDecode('Base32hex', current, decoded => decodeBase32(decoded, 'hex')) : null,
+      /^[0-9A-HJ-KM-NP-TV-Z=\-\s]+$/i.test(current) && current.replace(/[\s-]/g, '').length >= 8 && /[G-HJ-KM-NP-Tg-hj-km-np-t]/.test(current) ? tryDecode('Crockford Base32', current, decoded => decodeBase32(decoded, 'decimal')) : null,
       /^[a-z0-9]{1,83}1[02-9ac-hj-np-z]{6,}$/i.test(current) ? tryDecode('Bech32', current, decodeBech32) : null,
       /^[0-9A-Z $%*+\-./:]+$/i.test(current) && current.replace(/\s+/g, '').length >= 4 ? tryDecode('Base45', current, decodeBase45) : null,
       /^[0-9A-Z\s]+$/i.test(current) && /[A-Z]/i.test(current) && /\d/.test(current) && current.replace(/\s+/g, '').length >= 6 ? tryDecode('Base36', current, decodeBase36) : null,
