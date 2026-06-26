@@ -13294,7 +13294,9 @@ const smartDecode = async (value: string): Promise<string> => {
       // ROT/Caesar + Atbash auto (only at end to avoid false positives)
       (() => {
         const lts = current.replace(/[^a-z]/gi, '');
-        if (lts.length < 6 || lts.length / Math.max(1, current.length) < 0.55) return null;
+        // Use alphanumeric+space as denominator (exclude {}, symbols) to handle flag{...} format
+        const alphanum = current.replace(/[^a-z0-9 ]/gi, '');
+        if (lts.length < 6 || alphanum.length === 0 || lts.length / alphanum.length < 0.45) return null;
         const origScore = smartTextScore(current);
         const atb = atbashTransform(current);
         const best = Array.from({ length: 25 }, (_, i) => { const d = caesar(current, i + 1); return { d, score: smartTextScore(d) }; })
