@@ -13261,7 +13261,7 @@ const smartDecode = async (value: string): Promise<string> => {
       /^[0-9A-HJ-KM-NP-TV-Z=\-\s]+$/i.test(current) && current.replace(/[\s-]/g, '').length >= 8 && /[G-HJ-KM-NP-Tg-hj-km-np-t]/.test(current) ? tryDecode('Crockford Base32', current, decoded => decodeBase32(decoded, 'decimal')) : null,
       /^[a-z0-9]{1,83}1[02-9ac-hj-np-z]{6,}$/i.test(current) ? tryDecode('Bech32', current, decodeBech32) : null,
       /^[0-9A-Z $%*+\-./:]+$/i.test(current) && current.replace(/\s+/g, '').length >= 4 ? tryDecode('Base45', current, decodeBase45) : null,
-      /^[0-9A-Z\s]+$/i.test(current) && /[A-Z]/i.test(current) && /\d/.test(current) && current.replace(/\s+/g, '').length >= 6 ? tryDecode('Base36', current, decodeBase36) : null,
+      /^[0-9A-Z\s]+$/i.test(current) && /[A-Z]/i.test(current) && /\d/.test(current) && current.replace(/\s+/g, '').length >= 6 && !/^[0-9a-f\s]+$/i.test(current) ? tryDecode('Base36', current, decodeBase36) : null,
       /^[A-Za-z0-9!#$%&()*+,./:;<=>?@[\]^_`{|}~"\s]+$/.test(current) && /[!#$%&()*+,./:;<=>?@[\]^_`{|}~"]/.test(current) && current.length >= 8 ? tryDecode('Base91', current, decodeBase91) : null,
       /^[01\s,;|]+$/.test(current) && (current.match(/[01]{8}/g) || []).length > 0 ? tryDecode('Binary', current, binaryDecode) : null,
       /^(\\[0-7]{1,3}|0o[0-7]+|0[0-7]{1,3}|[0-7]{3}|[\s,;|])+$/i.test(current) ? tryDecode('Octal', current, octalDecode) : null,
