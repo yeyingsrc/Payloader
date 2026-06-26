@@ -11446,7 +11446,7 @@ const trySmartVigenereBruteforce = (value: string): string | null => {
   const score = smartTextScore(decrypted);
   const origScore = smartTextScore(text);
   const avgIC = cols.reduce((s, c) => s + colIC(c), 0) / bestKeyLen;
-  if (!hasHint && score - origScore < 8 && !/flag\{|ctf\{|picoctf\{|htb\{|thm\{|ductf\{|corctf\{|dice\{|wctf\{|utflag\{|sekai\{|crypto\{|lactf\{|nahamcon\{|hsctf\{|justctf\{|b01lers\{/i.test(decrypted)) return null;
+  if (!hasHint && score - origScore < 8 && !/flag\{|ctf\{|picoctf\{|htb\{|thm\{|ductf\{|corctf\{|dice\{|wctf\{|utflag\{|sekai\{|crypto\{|lactf\{|nahamcon\{|hsctf\{|justctf\{|b01lers\{|wanictf\{/i.test(decrypted)) return null;
   return `智能识别: Vigenère bruteforce (key length=${bestKeyLen})\n\n${JSON.stringify({ key, keyLength: bestKeyLen, avgColumnIC: Number(avgIC.toFixed(4)), decrypted, note: 'IC analysis + chi-squared column recovery. Verify manually.' }, null, 2)}`;
 };
 
@@ -13168,7 +13168,7 @@ const smartDecode = async (value: string): Promise<string> => {
   const stripped = value
     .replace(/^\s*\[[\*\+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
-    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
+    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
     .trim();
   const input = stripped !== value.trim() ? stripped : value;
   const smartRabin = trySmartRabinDecrypt(input);
