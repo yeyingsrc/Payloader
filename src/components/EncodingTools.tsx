@@ -13248,7 +13248,7 @@ const smartDecode = async (value: string): Promise<string> => {
         && !/^(\d{1,2}[\s,;|/.\-]+)*\d{1,2}$/.test(current.trim())
         ? tryDecode('Hex', current, decoded => utf8Decoder.decode(hexToBytes(decoded))) : null,
       // Space/comma-separated 0x-prefixed hex bytes: 0x70 0x69 ... or 0x70, 0x69, ...
-      /(?:0x[0-9a-fA-F]{1,2}[\s,]+){2,}0x[0-9a-fA-F]{1,2}/.test(current) ? tryDecode('0x-Hex bytes', current, v => utf8Decoder.decode(hexToBytes(v.replace(/[\s,]+/g, '').replace(/0x/gi, '')))) : null,
+      /(?:0x[0-9a-fA-F]{1,2}[\s,]+){1,}0x[0-9a-fA-F]{1,2}/.test(current) ? tryDecode('0x-Hex bytes', current, v => utf8Decoder.decode(hexToBytes(v.replace(/[\s,]+/g, '').replace(/0x/gi, '')))) : null,
       /^[A-Za-z0-9+/_=-\s]+$/.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base64', current, base64ToText) : null,
       /^[A-Z2-7=\s]+$/i.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base32', current, decodeBase32) : null,
       /^[0-9A-V=\s]+$/i.test(current) && current.replace(/\s+/g, '').length >= 8 ? tryDecode('Base32hex', current, decoded => decodeBase32(decoded, 'hex')) : null,
