@@ -13220,7 +13220,13 @@ const smartDecode = async (value: string): Promise<string> => {
   // Strip Python bytes wrapper: b'\x66...' or bytes.fromhex('...') → raw content for further decoding
   const bytesFromHexMatch = input.match(/^bytes\.fromhex\s*\(\s*['"]([0-9a-fA-F\s]+)['"]\s*\)/i);
   const pythonBytesMatch = !bytesFromHexMatch && input.match(/^(?:br|rb|b)\s*(['"])([\s\S]*)\1$/i);
-  let current = bytesFromHexMatch ? bytesFromHexMatch[1].replace(/\s/g, '') : pythonBytesMatch ? pythonBytesMatch[2] : input;
+  // Strip xxd/hexdump address columns: "00000000: 666c 6167  |flag|" → "666c6167"
+  const hexdumpCleaned = (() => {
+    if (!/^[0-9a-f]{4,}[:\s]/im.test(input)) return null;
+    const stripped = input.replace(/^[0-9a-fA-F]{4,}[:\s]+/gm, '').replace(/\|.*\|/g, '').replace(/\s+/g, '');
+    return /^[0-9a-fA-F]+$/.test(stripped) && stripped.length >= 4 ? stripped : null;
+  })();
+  let current = hexdumpCleaned ?? (bytesFromHexMatch ? bytesFromHexMatch[1].replace(/\s/g, '') : pythonBytesMatch ? pythonBytesMatch[2] : input);
   const steps: string[] = [];
   for (let depth = 0; depth < 12; depth += 1) {
     if (depth > 0 && looksLikeResolvedSmartDecodeText(current)) break;
