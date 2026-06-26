@@ -13163,7 +13163,7 @@ const smartDecode = async (value: string): Promise<string> => {
   const stripped = value
     .replace(/^\s*\[\*\]\s*/i, '')                                // [*] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
-    .replace(/^\s*(?:flag|output|ciphertext|encrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded)\s*[:=]\s*/i, '')
+    .replace(/^\s*(?:\w+\s+)?(?:flag|output|ciphertext|encrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|flag)\s*[:=]\s*/i, '')
     .trim();
   const input = stripped !== value.trim() ? stripped : value;
   const smartRabin = trySmartRabinDecrypt(input);
