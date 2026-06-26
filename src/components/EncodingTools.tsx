@@ -12985,10 +12985,11 @@ const trySmartSubstitutionBruteforce = (value: string): string | null => {
     .map(x => x.c);
   const subTable: Record<string, string> = {};
   sortedCipher.forEach((c, i) => { subTable[c] = etaoin[i] ?? c; });
+  const scoreText = text.length > 2000 ? text.slice(0, 2000) : text;
   const applySubTable = (t: string, tbl: Record<string, string>) =>
     Array.from(t).map(ch => { const u = ch.toUpperCase(); if (u >= 'A' && u <= 'Z') { const p = tbl[u] ?? ch; return ch === u ? p : p.toLowerCase(); } return ch; }).join('');
-  let decoded = applySubTable(text, subTable);
-  // Greedy hill-climbing: try all pairwise swaps up to 12 rounds
+  let decoded = applySubTable(scoreText, subTable);
+  // Greedy hill-climbing: try all pairwise swaps up to 12 rounds (capped at 2000 chars for perf)
   for (let round = 0; round < 12; round += 1) {
     let improved = false;
     const keys = Object.keys(subTable);
@@ -12996,20 +12997,21 @@ const trySmartSubstitutionBruteforce = (value: string): string | null => {
       for (let j = i + 1; j < keys.length; j += 1) {
         const [a, b] = [keys[i], keys[j]];
         [subTable[a], subTable[b]] = [subTable[b], subTable[a]];
-        const candidate = applySubTable(text, subTable);
+        const candidate = applySubTable(scoreText, subTable);
         if (smartTextScore(candidate) > smartTextScore(decoded)) { decoded = candidate; improved = true; }
         else [subTable[a], subTable[b]] = [subTable[b], subTable[a]];
       }
     }
     if (!improved) break;
   }
-  const score = smartTextScore(decoded);
+  const finalDecoded = applySubTable(text, subTable);
+  const score = smartTextScore(finalDecoded);
   const origScore = smartTextScore(text);
-  if (!hasHint && score - origScore < 8 && !/flag\{|ctf\{|picoctf\{|htb\{|thm\{|ductf\{|corctf\{|dice\{|wctf\{|utflag\{|sekai\{|actf\{|seccon\{|ritsec\{|crypto\{|lactf\{|crew\{|nahamcon\{|hsctf\{|justctf\{|b01lers\{|wanictf\{/i.test(decoded)) return null;
+  if (!hasHint && score - origScore < 8 && !/flag\{|ctf\{|picoctf\{|htb\{|thm\{|ductf\{|corctf\{|dice\{|wctf\{|utflag\{|sekai\{|actf\{|seccon\{|ritsec\{|crypto\{|lactf\{|crew\{|nahamcon\{|hsctf\{|justctf\{|b01lers\{|wanictf\{/i.test(finalDecoded)) return null;
   return `智能识别: Substitution cipher (frequency-rank mapping)\n\n${JSON.stringify({
     ic: Number(ic.toFixed(4)),
     substitutionTable: subTable,
-    decoded,
+    decoded: finalDecoded,
     score,
     note: 'Frequency-rank heuristic. Manual refinement via the Substitution tool may be needed.',
   }, null, 2)}`;
