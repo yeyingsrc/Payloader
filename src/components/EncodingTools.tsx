@@ -2212,7 +2212,7 @@ const a1z26Encode = (value: string, separator: string) => Array.from(value.toUpp
 
 const a1z26Decode = (value: string) => value
   .trim()
-  .split(/[\s,;|/-]+/)
+  .split(/[\s,;|/.\-]+/)
   .filter(Boolean)
   .map(token => {
     const number = Number.parseInt(token, 10);
@@ -13257,7 +13257,7 @@ const smartDecode = async (value: string): Promise<string> => {
       /^[A-Za-z0-9!#$%&()*+,./:;<=>?@[\]^_`{|}~"\s]+$/.test(current) && /[!#$%&()*+,./:;<=>?@[\]^_`{|}~"]/.test(current) && current.length >= 8 ? tryDecode('Base91', current, decodeBase91) : null,
       /^[01\s,;|]+$/.test(current) && (current.match(/[01]{8}/g) || []).length > 0 ? tryDecode('Binary', current, binaryDecode) : null,
       /^(\\[0-7]{1,3}|0o[0-7]+|[0-7]{3}|[\s,;|])+$/i.test(current) ? tryDecode('Octal', current, octalDecode) : null,
-      /^(\d{1,2}[\s,;|/-]+)*\d{1,2}$/.test(current.trim()) ? tryDecode('A1Z26', current, a1z26Decode) : null,
+      /^(\d{1,2}[\s,;|/.\-]+)*\d{1,2}$/.test(current.trim()) ? tryDecode('A1Z26', current, a1z26Decode) : null,
       // Morse
       /^[-. /\s]+$/.test(current) && /[.-]{2,}/.test(current) ? tryDecode('Morse', current, morseDecode) : null,
       // Arbitrary base-N (3-11): space-separated digits, all within [0,base)
