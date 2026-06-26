@@ -2193,9 +2193,9 @@ const octalEncode = (value: string, separator: string) => Array.from(utf8Encoder
 
 const octalDecode = (value: string) => {
   const clean = value.trim();
-  const tokens = clean.match(/\\[0-7]{1,3}|0o[0-7]+|[0-7]{1,3}/gi) || [];
+  const tokens = clean.match(/\\[0-7]{1,3}|0o[0-7]+|0[0-7]{1,3}|[0-7]{1,3}/gi) || [];
   const normalized = tokens.length
-    ? tokens.map(token => token.replace(/^\\/u, '').replace(/^0o/iu, ''))
+    ? tokens.map(token => token.replace(/^\\/u, '').replace(/^0o/iu, '').replace(/^0(?=[0-7])/u, ''))
     : /^[0-7]+$/.test(clean) && clean.length % 3 === 0
       ? clean.match(/.{3}/g) || []
       : [];
@@ -13258,7 +13258,7 @@ const smartDecode = async (value: string): Promise<string> => {
       /^[0-9A-Z\s]+$/i.test(current) && /[A-Z]/i.test(current) && /\d/.test(current) && current.replace(/\s+/g, '').length >= 6 ? tryDecode('Base36', current, decodeBase36) : null,
       /^[A-Za-z0-9!#$%&()*+,./:;<=>?@[\]^_`{|}~"\s]+$/.test(current) && /[!#$%&()*+,./:;<=>?@[\]^_`{|}~"]/.test(current) && current.length >= 8 ? tryDecode('Base91', current, decodeBase91) : null,
       /^[01\s,;|]+$/.test(current) && (current.match(/[01]{8}/g) || []).length > 0 ? tryDecode('Binary', current, binaryDecode) : null,
-      /^(\\[0-7]{1,3}|0o[0-7]+|[0-7]{3}|[\s,;|])+$/i.test(current) ? tryDecode('Octal', current, octalDecode) : null,
+      /^(\\[0-7]{1,3}|0o[0-7]+|0[0-7]{1,3}|[0-7]{3}|[\s,;|])+$/i.test(current) ? tryDecode('Octal', current, octalDecode) : null,
       /^(\d{1,2}[\s,;|/.\-]+)*\d{1,2}$/.test(current.trim()) ? tryDecode('A1Z26', current, a1z26Decode) : null,
       // Morse
       /^[-. /\s]+$/.test(current) && /[.-]{2,}/.test(current) ? tryDecode('Morse', current, morseDecode) : null,
