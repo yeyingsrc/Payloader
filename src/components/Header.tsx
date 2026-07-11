@@ -1652,11 +1652,17 @@ function Header({ sidebarCollapsed, setSidebarCollapsed, clientBuildInfo, showCl
               width: 100%;
               min-width: 0;
               height: 44px;
+              border: 0;
+              box-shadow: inset 0 0 0 1px var(--border-color);
+            }
+
+            .search-box:focus-within {
+              box-shadow: inset 0 0 0 1px var(--neon-cyan), 0 0 12px rgba(0, 240, 255, 0.15);
             }
 
             .search-input {
               min-width: 0;
-              height: 42px;
+              height: 44px;
               padding-right: 42px;
             }
 

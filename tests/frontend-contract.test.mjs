@@ -68,6 +68,13 @@ test('encoding dialog close control meets the minimum touch target', async () =>
   assert.match(closeButtonRule, /height:\s*44px/);
 });
 
+test('mobile search input meets the minimum touch target', async () => {
+  const header = await read('src/components/Header.tsx');
+
+  assert.match(header, /\.search-input\s*\{[^}]*height:\s*44px/s);
+  assert.doesNotMatch(header, /\.search-input\s*\{[^}]*height:\s*42px/s);
+});
+
 test('payload tutorial and WAF states are content driven', async () => {
   const detail = await read('src/components/PayloadDetail.tsx');
 
