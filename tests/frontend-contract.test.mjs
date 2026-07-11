@@ -125,6 +125,23 @@ test('admin client target cards retain their grid contract', async () => {
   assert.match(polish, /client-target-card[^{]*\{[^}]*overflow-wrap|client-target-card[\s\S]*overflow-wrap/);
 });
 
+test('admin mobile controls meet touch targets and polish CSS is balanced', async () => {
+  const polish = await read('admin/admin-polish.css');
+  const withoutComments = polish.replace(/\/\*[\s\S]*?\*\//g, '');
+  let braceBalance = 0;
+  let minimumBalance = 0;
+  for (const character of withoutComments) {
+    if (character === '{') braceBalance += 1;
+    if (character === '}') braceBalance -= 1;
+    minimumBalance = Math.min(minimumBalance, braceBalance);
+  }
+
+  assert.equal(braceBalance, 0);
+  assert.equal(minimumBalance, 0);
+  assert.match(polish, /@media \(max-width: 860px\)[\s\S]*?\.module-btn,[\s\S]*?min-height:\s*44px !important/);
+  assert.match(polish, /input:not\(\[type="file"\]\)[\s\S]*?min-height:\s*44px !important/);
+});
+
 test('admin reset previews impact, creates a backup, and reports its location', async () => {
   const admin = await read('admin/admin.js');
 

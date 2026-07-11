@@ -461,7 +461,7 @@ body[data-module="clientBuilds"] .editor-body > *:last-child li {
   padding: 2px 0;
 }
 
-
+@media (max-width: 560px) {
   body[data-module="account"] .account-security-hero {
     grid-template-columns: 1fr;
     gap: 10px;
@@ -537,4 +537,45 @@ body[data-module="settings"] .form-grid {
 }
 body[data-module="settings"] .form-section + .form-section {
   margin-top: 8px;
+}
+
+@media (max-width: 860px) {
+  button,
+  .module-btn,
+  .top-actions .btn,
+  .form-actions .btn,
+  .logo-upload-actions .btn {
+    min-height: 44px !important;
+  }
+
+  .top-actions .btn,
+  body[data-module="account"] .top-actions .btn {
+    max-height: none !important;
+  }
+
+  input:not([type="file"]):not([type="checkbox"]):not([type="radio"]),
+  select {
+    min-height: 44px !important;
+  }
+
+  .admin-shell,
+  body[data-mobile-view="editor"]:not([data-module="settings"]) .admin-shell {
+    padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .top-actions {
+    min-height: 60px;
+  }
+
+  body[data-module="settings"] .admin-shell {
+    padding-bottom: calc(112px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body[data-module="settings"] .top-actions {
+    min-height: 112px;
+  }
+
+  body[data-module="account"] .admin-shell {
+    padding-bottom: calc(62px + env(safe-area-inset-bottom)) !important;
+  }
 }
