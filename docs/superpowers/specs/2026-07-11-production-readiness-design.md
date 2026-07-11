@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved for implementation by the user's request to complete all identified optimizations and continue until the project is ready to deploy.
+Implemented and release-verified on 2026-07-12 after the user's request to complete all identified optimizations and continue until the project is ready to deploy.
 
 ## Product Decision
 
@@ -72,7 +72,7 @@ Payloader is a task-focused security knowledge workbench and local content-manag
 
 ### Delivery And Quality Gates
 
-- Node `>=22.12` is the supported runtime; Docker uses a compatible Node image and runs the full server rather than static Nginx only.
+- Node `>=22.13` is the supported runtime because Node 22.12 still requires the `--experimental-sqlite` flag; Docker uses a compatible Node image and runs the full server rather than static Nginx only.
 - `npm run check` runs type checking, lint, codec verification, content verification, tests, and a production build.
 - ESLint covers browser TS/TSX, admin JS, server MJS/CJS, and scripts with appropriate globals.
 - Node's built-in test runner covers data safety, import validation, release metadata, codec routing, and content-quality rules.
@@ -107,3 +107,11 @@ Payloader is a task-focused security knowledge workbench and local content-manag
 - Runtime: API health, public data, admin unauthorized/authenticated, export, reset-impact, and client-status probes.
 - Browser: 1280x800, 768x1024, and 390x844 public/admin screenshots plus accessibility snapshots and console checks.
 
+## Final Release Verdict
+
+- All acceptance criteria passed. The aggregate quality gate completed with 52 tests, 91 codec checks, zero blocking content errors, and a successful production bundle.
+- Both production-only and full npm dependency audits reported zero vulnerabilities against the official npm registry.
+- The final 106,393,952-byte image passed a read-only, non-root container smoke test; `/api/ready` reported `ready` and mutable data remained isolated under `/app/data`.
+- The final Linux x64 AppImage passed generation, download, SHA256, and freshness checks. It is 126,892,522 bytes with SHA256 `0291b242c67b64d244c43b60f7a354679f842c52269f9deda52897410c692b26`.
+- Stored and public counts differ only by deliberate publication rules: the public snapshot removes the legacy `jwt-none-alg` alias and injects the protected `xss-platform` system tool.
+- Browser verification found no overlap or horizontal overflow at the required viewports, no undersized visible mobile controls, and no console errors.
