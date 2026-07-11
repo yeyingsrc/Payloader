@@ -10,7 +10,39 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+/data/
 *.local
+.env
+.env.*
+!.env.example
+
+# Mutable runtime and generated artifacts
+server/*.sqlite-wal
+server/*.sqlite-shm
+server/*.sqlite.before-*.bak
+server/*.bak
+test-results/
+.playwright-mcp/
+.playwright-cli/
+screenshots/
+reports/
+audit-*.json
+data-audit-*.json
+tmp-*
+*.key
+*.pem
+*.p12
+*.pfx
+*.bak
+*.bak-*
+*.before-*
+
+# Root-level content curation and browser inspection artifacts
+/*.png
+/*.py
+/import-*.json
+/data-*.json
+/playwright-*.md
 
 # Editor directories and files
 .vscode/*

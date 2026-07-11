@@ -105,6 +105,7 @@ test('a failed build is persisted separately without replacing the last successf
   const publicInfo = await restarted.getPublicClientBuildInfo();
   const serializedPublicInfo = JSON.stringify(publicInfo);
   assert.equal(Object.hasOwn(publicInfo, 'lastFailure'), false);
+  assert.equal(publicInfo.lastBuildFailed, true);
   assert.equal(serializedPublicInfo.includes(failure.message), false);
   assert.equal(serializedPublicInfo.includes(failure.logs[0]), false);
 
@@ -118,6 +119,7 @@ test('a failed build is persisted separately without replacing the last successf
   assert.equal(recoveredStatus.latest.id, nextSuccess.id);
   assert.equal(recoveredStatus.lastFailure, null);
   assert.equal(await fileExists(restarted.__clientBuildTest.paths.lastFailureFile), false);
+  assert.equal((await restarted.getPublicClientBuildInfo()).lastBuildFailed, false);
 });
 
 test('freshness classifies frontend and public-data hash mismatches independently', { concurrency: false }, async t => {

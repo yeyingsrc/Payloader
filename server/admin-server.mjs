@@ -35,13 +35,20 @@ const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const distDir = join(rootDir, 'dist');
 const adminDir = join(rootDir, 'admin');
 const dataDir = resolve(process.env.PAYLOADER_DATA_DIR || join(rootDir, 'data'));
-const uploadDir = join(rootDir, 'data', 'uploads');
+const uploadDir = join(dataDir, 'uploads');
 const logoUploadDir = join(uploadDir, 'logo');
 
 const host = process.env.PAYLOADER_HOST || '127.0.0.1';
 const port = Number(process.env.PAYLOADER_PORT || 8081);
-const defaultAdminUser = process.env.PAYLOADER_ADMIN_USER || 'admin';
-const defaultAdminPassword = process.env.PAYLOADER_ADMIN_PASSWORD || 'payloader-admin';
+const bundledDefaultAdminUser = 'admin';
+const bundledDefaultAdminPassword = 'payloader-admin';
+const configuredAdminUser = String(process.env.PAYLOADER_ADMIN_USER || '').trim();
+const configuredAdminPassword = String(process.env.PAYLOADER_ADMIN_PASSWORD || '');
+const defaultAdminUser = configuredAdminUser || bundledDefaultAdminUser;
+const defaultAdminPassword = configuredAdminPassword || bundledDefaultAdminPassword;
+const loopbackHosts = new Set(['127.0.0.1', '::1', 'localhost']);
+const requiresExplicitInitialCredentials = process.env.NODE_ENV === 'production'
+  || !loopbackHosts.has(host.toLowerCase());
 const pathSeparator = process.platform === 'win32' ? '\\' : '/';
 const sessionCookieName = 'payloader_admin_session';
 const sessionTtlMs = Number(process.env.PAYLOADER_ADMIN_SESSION_TTL_MS || 8 * 60 * 60 * 1000);
@@ -370,7 +377,14 @@ const loadAdminCredentials = async () => {
   const stored = await getMetadataValue(credentialsMetadataKey, '');
   if (stored) {
     try {
-      return normalizeStoredAdminCredentials(JSON.parse(stored));
+      const credentials = normalizeStoredAdminCredentials(JSON.parse(stored));
+      if (
+        requiresExplicitInitialCredentials
+        && await verifyAdminPasswordHash(bundledDefaultAdminPassword, credentials.passwordHash)
+      ) {
+        throw new Error('Stored administrator credentials still use the bundled default password. Change them before exposing Payloader.');
+      }
+      return credentials;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Stored admin credential metadata is invalid.';
       throw new Error(`${message} Refusing to fall back to default admin credentials.`);
@@ -378,12 +392,20 @@ const loadAdminCredentials = async () => {
   }
 
   const timestamp = new Date().toISOString();
+  if (requiresExplicitInitialCredentials && (!configuredAdminUser || !configuredAdminPassword)) {
+    throw new Error('PAYLOADER_ADMIN_USER and PAYLOADER_ADMIN_PASSWORD are required for the first production or non-loopback startup.');
+  }
   const username = validateAdminUsername(defaultAdminUser);
-  const defaultPassword = String(defaultAdminPassword || '');
-  if (defaultPassword.length < 8 || defaultPassword.length > 128) {
+  const initialPassword = String(defaultAdminPassword || '');
+  if (requiresExplicitInitialCredentials) {
+    validateAdminPassword(initialPassword);
+    if (initialPassword === bundledDefaultAdminPassword) {
+      throw new Error('PAYLOADER_ADMIN_PASSWORD must not use the bundled default password.');
+    }
+  } else if (initialPassword.length < 8 || initialPassword.length > 128) {
     throw new Error('Initial PAYLOADER_ADMIN_PASSWORD must be 8-128 characters.');
   }
-  const passwordHash = await hashAdminPassword(defaultPassword);
+  const passwordHash = await hashAdminPassword(initialPassword);
   const credentials = {
     username,
     passwordHash,
@@ -397,12 +419,14 @@ const loadAdminCredentials = async () => {
 };
 
 const getAdminCredentials = () => {
-  adminCredentialsPromise ||= loadAdminCredentials();
-  return adminCredentialsPromise;
-};
-
-const refreshAdminCredentials = async () => {
-  adminCredentialsPromise = loadAdminCredentials();
+  if (!adminCredentialsPromise) {
+    const pending = loadAdminCredentials();
+    const guarded = pending.catch(error => {
+      if (adminCredentialsPromise === guarded) adminCredentialsPromise = undefined;
+      throw error;
+    });
+    adminCredentialsPromise = guarded;
+  }
   return adminCredentialsPromise;
 };
 
@@ -501,8 +525,24 @@ const loadJwtSecret = async () => {
 };
 
 const getJwtSecret = () => {
-  jwtSecretPromise ||= loadJwtSecret();
+  if (!jwtSecretPromise) {
+    const pending = loadJwtSecret();
+    const guarded = pending.catch(error => {
+      if (jwtSecretPromise === guarded) jwtSecretPromise = undefined;
+      throw error;
+    });
+    jwtSecretPromise = guarded;
+  }
   return jwtSecretPromise;
+};
+
+export const ensureApplicationReady = async () => {
+  await Promise.all([
+    ensureStoreReady(),
+    getAdminCredentials(),
+    getJwtSecret(),
+  ]);
+  return true;
 };
 
 const signJwt = async payload => {
@@ -1283,7 +1323,7 @@ const handlePublicApi = async (request, response, url) => {
       return true;
     }
     try {
-      await ensureStoreReady();
+      await ensureApplicationReady();
       json(response, 200, { status: 'ready' });
     } catch (error) {
       console.error('Readiness check failed:', error);
@@ -1459,6 +1499,28 @@ const handleRequest = async (request, response) => {
 
 export const createAdminServer = () => createServer(handleRequest);
 
+export const startAdminServer = async () => {
+  await ensureApplicationReady();
+  const credentials = await getAdminCredentials();
+  const server = createAdminServer();
+  await new Promise((resolveListen, rejectListen) => {
+    const onError = error => rejectListen(error);
+    server.once('error', onError);
+    server.listen(port, host, () => {
+      server.off('error', onError);
+      resolveListen();
+    });
+  });
+
+  const address = server.address();
+  const listeningPort = address && typeof address === 'object' ? address.port : port;
+  console.log(`Payloader frontend: http://${host}:${listeningPort}/`);
+  console.log(`Payloader admin:    http://${host}:${listeningPort}/admin`);
+  console.log(`Admin user: ${credentials.username}`);
+  console.log('Initial credentials can be set with PAYLOADER_ADMIN_USER and PAYLOADER_ADMIN_PASSWORD before first launch.');
+  return server;
+};
+
 const modulePath = resolve(fileURLToPath(import.meta.url));
 const entryPath = process.argv[1] ? resolve(process.argv[1]) : '';
 const isMainModule = process.platform === 'win32'
@@ -1466,13 +1528,9 @@ const isMainModule = process.platform === 'win32'
   : modulePath === entryPath;
 
 if (isMainModule) {
-  const server = createAdminServer();
-  server.listen(port, host, () => {
-    console.log(`Payloader frontend: http://${host}:${port}/`);
-    console.log(`Payloader admin:    http://${host}:${port}/admin`);
-    getAdminCredentials()
-      .then(credentials => console.log(`Admin user: ${credentials.username}`))
-      .catch(error => console.error('Unable to load admin credentials:', error));
-    console.log('Initial credentials can be set with PAYLOADER_ADMIN_USER and PAYLOADER_ADMIN_PASSWORD before first launch.');
+  startAdminServer().catch(error => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Payloader startup failed: ${message}`);
+    process.exitCode = 1;
   });
 }

@@ -10,7 +10,7 @@ import { getPublicData } from './data-store.mjs';
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const serverDir = join(rootDir, 'server');
 const distDir = join(rootDir, 'dist');
-const dataDir = join(rootDir, 'data');
+const dataDir = resolve(process.env.PAYLOADER_DATA_DIR || join(rootDir, 'data'));
 const uploadDir = join(dataDir, 'uploads');
 const buildRoot = process.env.PAYLOADER_CLIENT_BUILD_ROOT
   ? resolve(process.env.PAYLOADER_CLIENT_BUILD_ROOT)
@@ -18,14 +18,19 @@ const buildRoot = process.env.PAYLOADER_CLIENT_BUILD_ROOT
 const tmpRoot = process.env.PAYLOADER_CLIENT_TMP_ROOT
   ? resolve(process.env.PAYLOADER_CLIENT_TMP_ROOT)
   : join(tmpdir(), 'payloader-client-builds');
+const clientCacheRoot = process.env.PAYLOADER_CLIENT_CACHE_DIR
+  ? resolve(process.env.PAYLOADER_CLIENT_CACHE_DIR)
+  : join(buildRoot, '.builder-cache');
 const latestFile = join(buildRoot, 'latest.json');
 const lastFailureFile = join(buildRoot, 'last-failure.json');
 const electronMainTemplate = join(serverDir, 'client-electron-main.cjs');
 const clientBuilderSource = join(serverDir, 'client-builder.mjs');
+const projectPackageJson = join(rootDir, 'package.json');
 const tscCli = join(rootDir, 'node_modules', 'typescript', 'bin', 'tsc');
 const viteCli = join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js');
 const electronBuilderCli = join(rootDir, 'node_modules', 'electron-builder', 'cli.js');
 const electronPackageJson = join(rootDir, 'node_modules', 'electron', 'package.json');
+const immutableProductionRuntime = process.env.NODE_ENV === 'production';
 const productName = 'Payloader';
 const copyright = 'Copyright (c) Payloader';
 const pathSeparator = sep;
@@ -892,7 +897,6 @@ const sanitizeClientPayload = payload => {
 
 const sanitizeClientTool = tool => {
   const next = { ...tool };
-  const externalUrl = normalizeAllowedExternalUrl(next.externalUrl);
   if (String(next.id || '') === protectedXssToolId) {
     next.externalUrl = protectedXeyeUrl;
     next.references = [protectedXeyeUrl];
@@ -936,6 +940,24 @@ const hashFiles = async files => {
     hash.update(await readFile(file));
   }
   return hash.digest('hex');
+};
+
+const electronVersionFromSpec = value => {
+  const match = String(value || '').match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/);
+  if (!match) throw new Error('Unable to determine the configured Electron version.');
+  return match[0];
+};
+
+const configuredElectronVersion = async () => {
+  try {
+    const installed = JSON.parse(await readFile(electronPackageJson, 'utf8'));
+    return electronVersionFromSpec(installed.version);
+  } catch {
+    const projectPackage = JSON.parse(await readFile(projectPackageJson, 'utf8'));
+    return electronVersionFromSpec(
+      projectPackage.dependencies?.electron || projectPackage.devDependencies?.electron,
+    );
+  }
 };
 
 const frontendSourceFingerprint = async () => {
@@ -1119,7 +1141,7 @@ const prepareElectronApp = async (workDir, publicData) => {
 
   await copyFile(electronMainTemplate, join(appDir, 'main.cjs'));
 
-  const electronVersion = JSON.parse(await readFile(electronPackageJson, 'utf8')).version;
+  const electronVersion = await configuredElectronVersion();
   const signing = codeSigningSettings();
   const appPackage = {
     name: 'payloader-client',
@@ -1300,6 +1322,7 @@ const runBuild = async started => {
   try {
     await mkdir(workDir, { recursive: true });
     await mkdir(buildRoot, { recursive: true });
+    await mkdir(clientCacheRoot, { recursive: true });
     const { selected: selectedTargets, skipped: skippedTargets } = normalizeRequestedTargets(started.requestedTargets);
     if (!selectedTargets.length) {
       const reason = skippedTargets[0]?.reason || 'No supported client build targets are available on this host.';
@@ -1331,7 +1354,11 @@ const runBuild = async started => {
       return reused;
     }
 
-    if (!await distReady() || cached?.sourceHash !== sourceHash) {
+    const frontendDistReady = await distReady();
+    if (!frontendDistReady && immutableProductionRuntime) {
+      throw new Error('dist/index.html is missing from the immutable production runtime. Rebuild the deployment image.');
+    }
+    if (!frontendDistReady || (!immutableProductionRuntime && cached?.sourceHash !== sourceHash)) {
       currentJob = { ...currentJob, message: 'Building frontend assets' };
       await run(process.execPath, [tscCli, '-b']);
       await run(process.execPath, [viteCli, 'build']);
@@ -1353,13 +1380,17 @@ const runBuild = async started => {
     const buildEnv = {
       ...process.env,
       CSC_IDENTITY_AUTO_DISCOVERY: signing.configured ? 'true' : 'false',
-      ELECTRON_BUILDER_CACHE: join(buildRoot, '.electron-cache'),
+      HOME: join(clientCacheRoot, 'home'),
+      XDG_CACHE_HOME: join(clientCacheRoot, 'xdg-cache'),
+      XDG_CONFIG_HOME: join(clientCacheRoot, 'xdg-config'),
+      XDG_DATA_HOME: join(clientCacheRoot, 'xdg-data'),
+      ELECTRON_BUILDER_CACHE: join(clientCacheRoot, 'electron-builder'),
       ELECTRON_MIRROR: defaultElectronMirror,
       npm_config_electron_mirror: defaultElectronMirror,
       ELECTRON_BUILDER_BINARIES_MIRROR: defaultBuilderBinariesMirror,
       NPM_CONFIG_ELECTRON_BUILDER_BINARIES_MIRROR: defaultBuilderBinariesMirror,
       npm_config_electron_builder_binaries_mirror: defaultBuilderBinariesMirror,
-      electron_config_cache: join(buildRoot, '.electron-cache'),
+      electron_config_cache: join(clientCacheRoot, 'electron-builder'),
       ...signing.env,
     };
 
@@ -1533,7 +1564,7 @@ export const getClientBuildStatus = async () => {
 
 export const getPublicClientBuildInfo = async () => {
   await mkdir(buildRoot, { recursive: true });
-  const { latest: metadata } = await readStoredBuildState();
+  const { latest: metadata, lastFailure } = await readStoredBuildState();
   const freshness = await getBuildFreshness(metadata);
   if (!metadataMatchesCurrentContract(metadata) || !metadata.items.length) {
     return {
@@ -1546,6 +1577,7 @@ export const getPublicClientBuildInfo = async () => {
       distribution: clientDistribution,
       buildContractVersion: clientBuildContractVersion,
       codeSigningConfigured: false,
+      lastBuildFailed: Boolean(lastFailure),
       publicStats: publicDataStats({}),
       targets: clientTargetMatrix.map(normalizeTargetAvailability),
       staleLatest: staleMetadataSummary(metadata),
@@ -1577,6 +1609,7 @@ export const getPublicClientBuildInfo = async () => {
     distribution: metadata.distribution || clientDistribution,
     buildContractVersion: metadata.buildContractVersion || 0,
     codeSigningConfigured: Boolean(metadata.codeSigningConfigured),
+    lastBuildFailed: Boolean(lastFailure),
     publicStats: metadata.publicStats || publicDataStats({}),
     targets: clientTargetMatrix.map(normalizeTargetAvailability),
     freshness,
