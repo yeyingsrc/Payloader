@@ -692,6 +692,15 @@ const operations: Operation[] = [
     params: ['variant', 'secret', 'iv'],
   },
   {
+    id: 'chacha20-orig',
+    category: 'crypto',
+    name: { zh: 'ChaCha20 原始版', en: 'ChaCha20 Original' },
+    summary: { zh: '原始 ChaCha20 XOR 流密码，使用 32-byte key 和 8-byte nonce，兼容 PyCryptodome ChaCha20。', en: 'Original ChaCha20 XOR stream cipher with a 32-byte key and 8-byte nonce, compatible with PyCryptodome ChaCha20.' },
+    encodeLabel: { zh: '加密', en: 'Encrypt' },
+    decodeLabel: { zh: '解密', en: 'Decrypt' },
+    params: ['secret', 'iv'],
+  },
+  {
     id: 'chacha20',
     category: 'crypto',
     name: { zh: 'ChaCha20', en: 'ChaCha20' },
@@ -1381,14 +1390,14 @@ const bubbleBabbleVowels = 'aeiouy';
 const bubbleBabbleConsonants = 'bcdfghklmnprstvzx';
 const utf7DirectChars = new Set(Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'(),-./:? \t\r\n"));
 const gsm7DefaultAlphabet = [
-  '@', '拢', '$', '楼', '猫', '茅', '霉', '矛', '貌', '脟', '\n', '脴', '酶', '\r', '脜', '氓',
-  '螖', '_', '桅', '螕', '螞', '惟', '螤', '唯', '危', '螛', '螢', '\u001b', '脝', '忙', '脽', '脡',
-  ' ', '!', '"', '#', '陇', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/',
+  '@', '£', '$', '¥', 'è', 'é', 'ù', 'ì', 'ò', 'Ç', '\n', 'Ø', 'ø', '\r', 'Å', 'å',
+  'Δ', '_', 'Φ', 'Γ', 'Λ', 'Ω', 'Π', 'Ψ', 'Σ', 'Θ', 'Ξ', '\u001b', 'Æ', 'æ', 'ß', 'É',
+  ' ', '!', '"', '#', '¤', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/',
   '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?',
-  '隆', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
-  'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '脛', '脰', '脩', '脺', '搂',
-  '驴', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
-  'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '盲', '枚', '帽', '眉', '脿',
+  '¡', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
+  'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ä', 'Ö', 'Ñ', 'Ü', '§',
+  '¿', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
+  'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'ä', 'ö', 'ñ', 'ü', 'à',
 ];
 const gsm7ReverseAlphabet = new Map(gsm7DefaultAlphabet.map((char, index) => [char, index]));
 const gsm7ExtensionAlphabet: Record<string, number> = {
@@ -1401,7 +1410,7 @@ const gsm7ExtensionAlphabet: Record<string, number> = {
   '~': 0x3d,
   ']': 0x3e,
   '|': 0x40,
-  '' : 0x65,
+  '€': 0x65,
 };
 const reverseGsm7ExtensionAlphabet = Object.fromEntries(Object.entries(gsm7ExtensionAlphabet).map(([char, code]) => [code, char])) as Record<number, string>;
 const brainfuckToOok: Record<string, string> = {
@@ -1671,7 +1680,7 @@ const convertBits = (data: number[], fromBits: number, toBits: number, pad: bool
   if (pad) {
     if (bits > 0) output.push((accumulator << (toBits - bits)) & maxValue);
   } else if (bits >= fromBits || ((accumulator << (toBits - bits)) & maxValue)) {
-    throw new Error('Bech32 padding 闈為浂鎴栦笉瀹屾暣');
+    throw new Error('Bech32 padding 非零或不完整');
   }
   return output;
 };
@@ -1710,7 +1719,7 @@ const encodeBech32 = (value: string, hrpValue: string, variant: string) => {
 const decodeBech32 = (value: string) => {
   const clean = value.trim();
   if (!clean) throw new Error('Bech32 输入为空');
-  if (clean !== clean.toLowerCase() && clean !== clean.toUpperCase()) throw new Error('Bech32 涓嶅厑璁稿ぇ灏忓啓娣风敤');
+  if (clean !== clean.toLowerCase() && clean !== clean.toUpperCase()) throw new Error('Bech32 不允许大小写混用');
   const lower = clean.toLowerCase();
   const separator = lower.lastIndexOf('1');
   if (separator < 1 || separator + 7 > lower.length) throw new Error('Bech32 分隔符或 checksum 长度无效');
@@ -2232,7 +2241,7 @@ const morseDecode = (value: string) => value
 
 // Pollux cipher: digits represent ·  —  × (dot/dash/separator) based on a key
 // Common CTF variant: 0=dot(·), 1=dash(—), 8/9=separator; others are noise
-const polluxDecode = (value: string, mapping = '01234567 89') => {
+const polluxDecode = (value: string, _mapping = '01234567 89') => {
   // mapping[digit] → '.', '-', ' ', or noise (skip)
   // default mapping: 0→. 1→- 2→. 3→- 4→. 5→- 6→. 7→- 8→' ' 9→' '
   const dotChars = new Set('024');
@@ -2443,14 +2452,79 @@ const gsm7SeptetsToText = (septets: number[]) => {
     const septet = septets[index];
     if (septet === 0x1b) {
       const next = septets[index + 1];
-      if (next == null) break;
-      output += reverseGsm7ExtensionAlphabet[next] || '?';
+      if (next == null) throw new Error('GSM 7-bit 格式错误：末尾 ESC 缺少扩展字符');
+      const extended = reverseGsm7ExtensionAlphabet[next];
+      if (extended == null) throw new Error(`GSM 7-bit 格式错误：未知扩展码 0x${next.toString(16).padStart(2, '0')}`);
+      output += extended;
       index += 1;
       continue;
     }
     output += gsm7DefaultAlphabet[septet] || '?';
   }
   return output;
+};
+
+type Gsm7PackedPayload = {
+  encoding?: string;
+  septetCount: number;
+  packedHex: string;
+};
+
+const parseGsm7SeptetCount = (value: unknown) => {
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\d+$/.test(value.trim())
+      ? Number(value.trim())
+      : Number.NaN;
+  if (!Number.isSafeInteger(numeric) || numeric < 0) throw new Error('GSM 7-bit septetCount 必须是非负整数');
+  return numeric;
+};
+
+const unpackCountedGsm7Septets = (bytes: Uint8Array, septetCount: number) => {
+  const expectedByteLength = Math.ceil((septetCount * 7) / 8);
+  if (bytes.length !== expectedByteLength) {
+    throw new Error(`GSM 7-bit 长度不一致：${septetCount} septets 应为 ${expectedByteLength} bytes，实际为 ${bytes.length}`);
+  }
+  const unpacked = unpackGsm7Septets(bytes);
+  if (septetCount > unpacked.length) throw new Error('GSM 7-bit septetCount 超出 packed 数据容量');
+  const septets = unpacked.slice(0, septetCount);
+  if (bytesToHex(packGsm7Septets(septets)) !== bytesToHex(bytes)) {
+    throw new Error('GSM 7-bit packed 数据包含非零填充位或与 septetCount 不一致');
+  }
+  return septets;
+};
+
+const parseCountedGsm7Payload = (value: string): Gsm7PackedPayload | null => {
+  const text = value.trim();
+  if (text.startsWith('{')) {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error('GSM 7-bit JSON 格式错误');
+    }
+    const packedHex = payload.packedHex ?? payload.hex;
+    const septetCount = payload.septetCount ?? payload.septets ?? payload.length;
+    if (typeof packedHex !== 'string' || septetCount == null) {
+      throw new Error('GSM 7-bit JSON 需要 packedHex 和 septetCount');
+    }
+    return {
+      encoding: typeof payload.encoding === 'string' ? payload.encoding : undefined,
+      septetCount: parseGsm7SeptetCount(septetCount),
+      packedHex,
+    };
+  }
+
+  if (/\b(?:septetCount|septets|packedHex)\b/i.test(text)) {
+    const countMatch = text.match(/\b(?:septetCount|septets)\s*[:=]\s*(\d+)/i);
+    const hexMatch = text.match(/\b(?:packedHex|hex)\s*[:=]\s*((?:0x)?[0-9a-f][0-9a-f\s:_-]*)/i);
+    if (!countMatch || !hexMatch) throw new Error('GSM 7-bit 显式长度格式需要 septetCount 和 packedHex');
+    return {
+      septetCount: parseGsm7SeptetCount(countMatch[1]),
+      packedHex: hexMatch[1],
+    };
+  }
+  return null;
 };
 
 const gsm7Encode = (value: string) => {
@@ -2468,11 +2542,28 @@ const gsm7Encode = (value: string) => {
     }
     throw new Error(`GSM 7-bit 不支持字符: ${char}`);
   }
-  return bytesToHex(packGsm7Septets(septets));
+  return JSON.stringify({
+    encoding: 'gsm7-packed',
+    septetCount: septets.length,
+    packedHex: bytesToHex(packGsm7Septets(septets)),
+  }, null, 2);
 };
 
 const gsm7Decode = (value: string) => {
-  const septets = unpackGsm7Septets(hexToBytes(value));
+  const counted = parseCountedGsm7Payload(value);
+  if (counted) {
+    const bytes = hexToBytes(counted.packedHex);
+    return gsm7SeptetsToText(unpackCountedGsm7Septets(bytes, counted.septetCount));
+  }
+
+  const bytes = hexToBytes(value);
+  const septets = unpackGsm7Septets(bytes);
+  if (bytes.length > 0 && bytes.length % 7 === 0 && septets[septets.length - 1] === 0) {
+    throw new Error('GSM 7-bit 裸 Hex 的 septet count 存在歧义；请提供包含 septetCount 和 packedHex 的格式');
+  }
+  if (bytesToHex(packGsm7Septets(septets)) !== bytesToHex(bytes)) {
+    throw new Error('GSM 7-bit packed 数据包含非零填充位；请提供正确的 septetCount');
+  }
   return gsm7SeptetsToText(septets);
 };
 
@@ -2786,7 +2877,7 @@ const parseEnigmaSettings = (secret: string) => {
   for (const pair of plugboardPairs) {
     const [left, right] = pair;
     if (left === right) throw new Error(`Plugboard pair ${pair} cannot connect the same letter`);
-    if (plugboard.has(left) || plugboard.has(right)) throw new Error(`Plugboard 瀛楁瘝閲嶅: ${pair}`);
+    if (plugboard.has(left) || plugboard.has(right)) throw new Error(`Plugboard 字母重复: ${pair}`);
     plugboard.set(left, right);
     plugboard.set(right, left);
   }
@@ -3059,7 +3150,6 @@ const identifyHash = (value: string) => {
   if (!text) throw new Error('请输入要识别的 Hash 或摘要字符串');
   type HashEntry = { name: string; hashcatMode?: number; johnFormat?: string };
   const candidates: HashEntry[] = [];
-  const lower = text.toLowerCase();
   const hexOnly = /^[0-9a-f]+$/i.test(text);
   if (/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(text)) candidates.push({ name: 'bcrypt', hashcatMode: 3200, johnFormat: 'bcrypt' });
   if (/^\$argon2(id|i|d)\$/.test(text)) candidates.push({ name: 'Argon2', hashcatMode: 13400 });
@@ -3391,7 +3481,7 @@ type Sm4Payload = { ciphertextHex?: string; ciphertext?: string; ivHex?: string;
 const parseCryptoJsWordArray = (CryptoJS: CryptoJsRuntime, value: string, labelText: string) => {
   const raw = String(value || '');
   const text = raw.trim();
-  if (!text) throw new Error(`${labelText} 涓嶈兘涓虹┖`);
+  if (!text) throw new Error(`${labelText} 不能为空`);
   const compactHex = text.replace(/^0x/i, '').replace(/[\s:_-]/g, '');
   if (compactHex.length % 2 === 0 && /^[0-9a-f]+$/i.test(compactHex)) {
     return { wordArray: CryptoJS.enc.Hex.parse(compactHex), format: 'hex' };
@@ -3418,7 +3508,7 @@ const cryptoJsWordArrayToText = (CryptoJS: CryptoJsRuntime, wordArray: CryptoJsW
 
 const parseCryptoJsCipherInput = (CryptoJS: CryptoJsRuntime, value: string) => {
   const text = String(value || '').trim();
-  if (!text) throw new Error('瀵嗘枃涓嶈兘涓虹┖');
+  if (!text) throw new Error('密文不能为空');
   try {
     const payload = JSON.parse(text) as { ciphertext?: string; ciphertextEncoding?: string; iv?: string; mode?: string; alg?: string };
     if (payload && typeof payload === 'object' && payload.ciphertext) {
@@ -3450,7 +3540,7 @@ const cryptoJsCipherByOperation = (CryptoJS: CryptoJsRuntime, operationId: Opera
     case 'rabbit':
       return { helper: CryptoJS.Rabbit, alg: 'Rabbit', stream: true };
     default:
-      throw new Error('涓嶆敮鎸佺殑 crypto-js cipher');
+      throw new Error('不支持的 crypto-js cipher');
   }
 };
 
@@ -3506,7 +3596,7 @@ const cryptoJsCipherTransform = async (operationId: OperationId, direction: Dire
 const normalizeFixedBytes = (value: string, labelText: string, allowedLengths: number[]) => {
   const raw = String(value || '');
   const text = raw.trim();
-  if (!text) throw new Error(`${labelText} 涓嶈兘涓虹┖`);
+  if (!text) throw new Error(`${labelText} 不能为空`);
   const compactHex = text.replace(/^0x/i, '').replace(/[\s:_-]/g, '');
   const parsed = compactHex.length % 2 === 0 && /^[0-9a-f]+$/i.test(compactHex)
     ? { bytes: hexToBytes(compactHex), format: 'hex' }
@@ -3527,7 +3617,7 @@ const normalizeFixedBytes = (value: string, labelText: string, allowedLengths: n
 
 const parseHexOrBase64Bytes = (value: string, labelText: string) => {
   const text = String(value || '').trim();
-  if (!text) throw new Error(`${labelText} 涓嶈兘涓虹┖`);
+  if (!text) throw new Error(`${labelText} 不能为空`);
   const compactHex = text.replace(/^0x/i, '').replace(/[\s:_-]/g, '');
   if (compactHex.length % 2 === 0 && /^[0-9a-f]+$/i.test(compactHex)) return hexToBytes(compactHex);
   return base64ToBytes(text);
@@ -3547,7 +3637,7 @@ const parseOptionalHexOrUtf8Bytes = (value: string) => {
 const parseHexBase64OrUtf8Bytes = (value: string, labelText: string) => {
   const raw = String(value || '');
   const text = raw.trim();
-  if (!text) throw new Error(`${labelText} 涓嶈兘涓虹┖`);
+  if (!text) throw new Error(`${labelText} 不能为空`);
   const compactHex = text.replace(/^0x/i, '').replace(/[\s:_-]/g, '');
   if (compactHex.length % 2 === 0 && /^[0-9a-f]+$/i.test(compactHex)) {
     return { bytes: hexToBytes(compactHex), format: 'hex' };
@@ -4229,7 +4319,7 @@ const nobleStreamSpec = (operationId: OperationId) => {
     case 'xsalsa20':
       return { alg: 'XSalsa20', keyLengths: [32], nonceLength: 24 };
     default:
-      throw new Error('涓嶆敮鎸佺殑 noble stream cipher');
+      throw new Error('不支持的 noble stream cipher');
   }
 };
 
@@ -4263,7 +4353,7 @@ const nobleStreamTransform = async (operationId: OperationId, direction: Directi
   const nonce = normalizeFixedBytes(nonceSource || '', `${spec.alg} nonce`, [spec.nonceLength]);
   const inputBytes = direction === 'encode'
     ? utf8Encoder.encode(value)
-    : parseHexOrBase64Bytes(payload?.ciphertextHex || payload?.ciphertext || value, '瀵嗘枃');
+    : parseHexOrBase64Bytes(payload?.ciphertextHex || payload?.ciphertext || value, '密文');
   const output = await nobleStreamCipherBytes(operationId, key.bytes, nonce.bytes, inputBytes);
   if (direction === 'decode') return bytesToUtf8OrHexJson(output);
   return JSON.stringify({
@@ -4300,7 +4390,7 @@ const nobleAeadSpec = (operationId: OperationId): NobleAeadSpec => {
     case 'xsalsa20-poly1305':
       return { alg: 'XSalsa20-Poly1305 / secretbox', keyLengths: [32], nonceLength: 24, tagLength: 16, supportsAad: false };
     default:
-      throw new Error('涓嶆敮鎸佺殑 noble AEAD cipher');
+      throw new Error('不支持的 noble AEAD cipher');
   }
 };
 
@@ -4446,7 +4536,7 @@ const aesRawBlockTransform = async (operationId: OperationId, direction: Directi
   };
   const inputBytes = direction === 'encode'
     ? (disablePadding ? parseHexBase64OrUtf8Bytes(value, 'plaintext').bytes : utf8Encoder.encode(value))
-    : parseHexOrBase64Bytes(payload?.ciphertextHex || payload?.ciphertext || value, '瀵嗘枃');
+    : parseHexOrBase64Bytes(payload?.ciphertextHex || payload?.ciphertext || value, '密文');
   const output = direction === 'encode' ? makeCipher().encrypt(inputBytes) : makeCipher().decrypt(inputBytes);
   if (direction === 'decode') return bytesToUtf8OrHexJson(output);
   return JSON.stringify({
@@ -6300,7 +6390,7 @@ const parseJwkJwe = (value: string) => {
 };
 
 const readSshUint32 = (bytes: Uint8Array, offset: number) => {
-  if (offset + 4 > bytes.length) throw new Error('SSH blob 瀛楁闀垮害涓嶅畬');
+  if (offset + 4 > bytes.length) throw new Error('SSH blob 字段长度不完整');
   return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
 };
 
@@ -6440,7 +6530,7 @@ const punycodeDecodeLabel = (value: string) => {
     const oldI = i;
     let weight = 1;
     for (let k = 36; ; k += 36) {
-      if (index >= value.length) throw new Error('Punycode 鏁版嵁涓嶅畬');
+      if (index >= value.length) throw new Error('Punycode 数据不完整');
       const digit = punycodeBasicToDigit(value.charCodeAt(index++));
       i += digit * weight;
       const t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
@@ -6641,7 +6731,7 @@ const readAsn1Length = (bytes: Uint8Array, offset: number, limit: number) => {
   if (first === 0x80) return { cursor: offset + 1, length: 'indefinite' as const };
   const count = first & 0x7f;
   if (count > 4) throw new Error('ASN.1 length 字段过长，已拒绝解析');
-  if (offset + 1 + count > limit) throw new Error('ASN.1 length 瀛楁涓嶅畬');
+  if (offset + 1 + count > limit) throw new Error('ASN.1 length 字段不完整');
   let length = 0;
   for (let index = 0; index < count; index += 1) length = length * 256 + bytes[offset + 1 + index];
   return { cursor: offset + 1 + count, length };
@@ -7805,6 +7895,8 @@ const parseKeyValueNumbers = (value: string) => {
 
   for (const match of value.matchAll(/\b([a-zA-Z][\w-]*)\s*[:=]\s*(['"]?)(0x[0-9a-f_]+|\d[\d_]*[nNlL]?|[A-Za-z0-9+/_-]+={0,2})\2/gi)) {
     if (isArithmeticFieldMatch(value, match.index || 0)) continue;
+    const assignmentEnd = (match.index || 0) + match[0].length;
+    if (/^\s*\(/.test(value.slice(assignmentEnd))) continue;
     rememberParam(match[1], match[3]);
   }
   const lines = value.replace(/\r\n/g, '\n').split('\n');
@@ -10668,7 +10760,7 @@ const runBrainfuck = (program: string, input: string, maxStepsValue: string) => 
   const maxSteps = Math.min(5000000, Math.max(1000, Number.parseInt(maxStepsValue, 10) || 120000));
   while (pc < code.length) {
     steps += 1;
-    if (steps > maxSteps) throw new Error(`Brainfuck 瓒呰繃姝ユ暟闄愬埗 ${maxSteps}`);
+    if (steps > maxSteps) throw new Error(`Brainfuck 超过步数限制 ${maxSteps}`);
     const op = code[pc];
     if (op === '>') pointer = (pointer + 1) % tape.length;
     else if (op === '<') pointer = (pointer - 1 + tape.length) % tape.length;
@@ -11081,7 +11173,7 @@ const trySmartXorDecrypt = (value: string) => {
   const parsed = parseSmartCipherBytes(decimalArrayBytes ? `[${Array.from(decimalArrayBytes).join(',')}]` : source, labelled || /\bxor\b/.test(lowered) || Boolean(decimalArrayBytes));
   if (!parsed) return null;
   const bytes = parsed.bytes;
-  if (bytes.length < 4) return null;
+  if (!bytes || bytes.length < 4) return null;
   const candidates: Array<{ method: string; key: string; score: number; text: string }> = [];
 
   if (/\bxor\b/.test(lowered) && fields.key) {
@@ -11281,7 +11373,7 @@ const trySmartStructuredClassicDecrypt = (value: string) => {
   if ((/\bpolybius\b/i.test(value) || /^[1-5\s,;|/-]+$/.test(text)) && (text.match(/[1-5][1-5]/g) || []).length >= 2) {
     addCandidate('polybius', () => polybiusDecode(text));
   }
-  if (/\btap\b|鏁插嚮|鏁叉搳/i.test(value) || /([.-]{1,5}\s+[.-]{1,5})(\s*\/\s*|\s+)/.test(`${text} `)) {
+  if (/\btap\b|敲击|敲擊/i.test(value) || /([.-]{1,5}\s+[.-]{1,5})(\s*\/\s*|\s+)/.test(`${text} `)) {
     addCandidate('tap-code', () => tapCodeDecode(text));
   }
 
@@ -12949,7 +13041,7 @@ const looksLikeResolvedSmartDecodeText = (value: string) => {
   if (/flag\{|ctf\{|picoctf\{|htb\{|thm\{|key\{|crypto\{|dice\{|wctf\{|utflag\{|hsctf\{|sdctf\{|dctf\{|nahamcon\{|ductf\{|bcactf\{|uiuctf\{|pbctf\{|corctf\{|sekai\{|idek\{|bi0s\{|glacierctf\{|rgbctf\{|zer0pts\{|watevr\{|darkctf\{|secureflag\{|actf\{|seccon\{|sunshine\{|ritsec\{|magpie\{|crew\{|squ1rrel\{|nitro\{|mapna\{|cakectf\{|dragonctf\{|lactf\{|wanictf\{|jerseyctf\{|b01lers\{|sunshinectf\{/i.test(text)) return true;
   // Generic CTF flag: word{ ... } but exclude common encoding/intermediate prefixes
   if (/\b[a-z]{2,12}\{[A-Za-z0-9_!@#$%^&*.\-]{4,}\}/i.test(text) &&
-    !/\b(?:b64|hex|url|rot|enc|dec|utf|msg|str|txt|raw|out|res|key|val|data|base|code|text|byte|hash)\{/i.test(text))
+    !/\b(?:b64|hex|url|rot|xor|enc|dec|utf|msg|str|txt|raw|out|res|key|val|data|base|code|text|byte|hash)\{/i.test(text))
     return true;
   if (/^<[a-z!?/][\s\S]*>$/i.test(text) && printableRatio(utf8Encoder.encode(text)) > 0.9) return true;
   if (/^(?:https?|ftp|file|mailto):\/\/\S+/i.test(text)) return true;
@@ -13091,7 +13183,6 @@ const trySmartCrtSolver = (value: string): string | null => {
 
 const trySmartEccHelper = (value: string): string | null => {
   const lower = value.toLowerCase();
-  if (!/\b(ecc|ecdh|elliptic|curve|secp|nist|weierstrass|point|order)\b/.test(lower)) return null;
   const fields = parseLooseCtfFields(value);
   const getN = (aliases: string[]) => { const r = looseField(fields, aliases); return r ? parseNumericValue(r) : null; };
   const p   = getN(['p', 'prime', 'field', 'mod', 'modulus']);
@@ -13103,11 +13194,17 @@ const trySmartEccHelper = (value: string): string | null => {
   const c2Raw = looseField(fields, ['c2', 's', 'point2', 'cipher2', 'rightcipher']);
   const pub  = looseField(fields, ['q', 'pubkey', 'publickey', 'pub', 'point', 'qa', 'pk']);
   const g    = looseField(fields, ['g', 'generator', 'basepoint', 'base_point']);
+  const hasCurveKeyword = /\b(?:ecc|ecdh|elliptic|curve|secp\w*|nist|weierstrass|point|basepoint|base[_ -]?point|ecdlp)\b/.test(lower);
+  const hasCoordinateEvidence = /\b(?:g|q|p|r|generator|public(?:\s+key)?|base(?:\s+point)?)\s*[:=]\s*\(\s*(?:0x[0-9a-f]+|\d+)\s*,\s*(?:0x[0-9a-f]+|\d+)\s*\)/i.test(value);
+  const hasCurveEquationEvidence = /\by\s*(?:\^|\*\*)\s*2\s*=\s*x\s*(?:\^|\*\*)\s*3\b/i.test(value)
+    || /y²\s*=\s*x³/i.test(value);
+  if (!hasCurveKeyword && !hasCoordinateEvidence && !hasCurveEquationEvidence) return null;
   let confidence = 0;
   if (p) confidence += 3;
   if (a != null) confidence += 2;
   if (b != null) confidence += 2;
   if (g || pub) confidence += 2;
+  if (hasCoordinateEvidence) confidence += 2;
   if (/secp256k1|secp256r1|p-256|p-384|p-521|curve25519|ed25519/i.test(value)) confidence += 4;
   if (confidence < 5) return null;
   const nBits = p ? p.toString(2).length : null;
@@ -13169,21 +13266,21 @@ const smartDecode = async (value: string): Promise<string> => {
   const stripped = value
     .replace(/^\s*\[[\*\+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
-    .replace(/^\s*(?:\w+\s+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature|nonce|iv|salt|seed|pt|value|flag_enc|flag_hex)\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?(?:is\s*)?[:=]\s*/i, '')
+    .replace(/^\s*(?:\w+[ \t]+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature|nonce|iv|salt|seed|pt|value|flag_enc|flag_hex)\b[ \t]*(?:\w+[ \t]*)?(?:\([^\r\n)]*\)[ \t]*)?(?:is[ \t]*)?[:=][ \t]*/i, '')
     .trim();
   const input = stripped !== value.trim() ? stripped : value;
+  const smartDlp = trySmartDiscreteLog(input);
+  if (smartDlp) return smartDlp;
+  const smartEcc = trySmartEccHelper(input);
+  if (smartEcc) return smartEcc;
   const smartRabin = trySmartRabinDecrypt(input);
   if (smartRabin) return smartRabin;
   const smartRsa = trySmartRsaDecrypt(input);
   if (smartRsa) return smartRsa;
   const smartMod = trySmartModDecode(input);
   if (smartMod) return smartMod;
-  const smartEcc = trySmartEccHelper(input);
-  if (smartEcc) return smartEcc;
   const smartCrt = trySmartCrtSolver(input);
   if (smartCrt) return smartCrt;
-  const smartDlp = trySmartDiscreteLog(input);
-  if (smartDlp) return smartDlp;
   const smartSymmetric: string | null = await trySmartSymmetricDecrypt(input);
   if (smartSymmetric) return smartSymmetric;
   // AES ECB block-repeat detection: repeated 16-byte blocks in hex ciphertext signal ECB mode
@@ -13206,6 +13303,8 @@ const smartDecode = async (value: string): Promise<string> => {
   if (smartNonceReuse) return smartNonceReuse;
   const smartHashLengthExtension = trySmartHashLengthExtension(input);
   if (smartHashLengthExtension) return smartHashLengthExtension;
+  const smartXor = trySmartXorDecrypt(input);
+  if (smartXor) return smartXor;
   const smartVigenere = trySmartVigenereBruteforce(input);
   if (smartVigenere) return smartVigenere;
   const smartSubstitution = trySmartSubstitutionBruteforce(input);
@@ -13222,9 +13321,6 @@ const smartDecode = async (value: string): Promise<string> => {
     return null;
   })();
   if (polluxResult) return polluxResult;
-  const smartXor = trySmartXorDecrypt(input);
-  if (smartXor) return smartXor;
-
   // Strip Python bytes wrapper: b'\x66...' or bytes.fromhex('...') → raw content for further decoding
   const bytesFromHexMatch = input.match(/^bytes\.fromhex\s*\(\s*['"]([0-9a-fA-F\s]+)['"]\s*\)/i);
   const pythonBytesMatch = !bytesFromHexMatch && input.match(/^(?:br|rb|b)\s*(['"])([\s\S]*)\1$/i);
