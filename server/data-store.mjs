@@ -1285,18 +1285,6 @@ const jwtCanonicalPayloadIds = [
   'jwt-jku-x5u-injection',
 ];
 
-const jwtSecurityNavigationNode = () => ({
-  id: 'jwt-security',
-  name: i18n('JWT安全', 'JWT Security'),
-  children: [
-    { id: 'jwt-basics-nav', name: i18n('JWT基础与声明篡改', 'JWT basics and claim tampering'), payloadId: 'jwt-security' },
-    { id: 'jwt-none-algo-nav', name: i18n('None算法攻击', 'None algorithm attack'), payloadId: 'jwt-none-attack' },
-    { id: 'jwt-weak-secret-nav', name: i18n('弱密钥爆破', 'Weak secret brute force'), payloadId: 'jwt-secret-bruteforce' },
-    { id: 'jwt-kid-injection-nav', name: i18n('KID注入/密钥混淆', 'KID injection and key confusion'), payloadId: 'jwt-key-confusion' },
-    { id: 'jwt-jku-spoofing-nav', name: i18n('JKU/X5U远程密钥', 'JKU/X5U remote key injection'), payloadId: 'jwt-jku-x5u-injection' },
-  ],
-});
-
 const i18n = (zh, en = zh) => ({ zh, en });
 
 const publicNavigationNameOverrides = new Map([
@@ -1307,7 +1295,6 @@ const publicNavigationNameOverrides = new Map([
   ['ws-auth-bypass-nav', i18n('WebSocket 授权缺陷', 'WebSocket authorization flaws')],
 ]);
 
-const businessLogicCategory = i18n('??????', 'Business Logic Vulnerabilities');
 const businessLogicPayloadIds = new Set();
 const legacyNavigationPayloadRefMigrations = [
   { nodeId: 'jwt-none-algo-nav', from: 'jwt-none-algo', to: 'jwt-none-attack' },
@@ -1318,192 +1305,8 @@ const legacyNavigationPayloadRefMigrations = [
 ];
 const ensureBusinessLogicNavigation = navigation => ({ items: navigation, changed: false });
 const ensureJwtSecurityNavigation = navigation => ({ items: navigation, changed: false });
-const patchBusinessLogicNavigationNode = item => ({ item, changed: false });
-const patchJwtSecurityNavigationNode = item => ({ item, changed: false });
-
-const hasHanText = value => /\p{Script=Han}/u.test(String(value || ''));
-const hasPayloadPattern = value => {
-  const text = String(value || '');
-  return /(<script|onerror=|onload=|javascript:|UNION\s+SELECT|SELECT\s+|OR\s+1=1|SLEEP\(|WAITFOR|ORDER\s+BY|\/\.\.\/|<!ENTITY|<\?xml|{{|}}|\$\{|%[0-9a-f]{2}|\\u[0-9a-f]{4}|gopher:\/\/|file:\/\/|dict:\/\/|ldap:\/\/|php:\/\/|data:\/\/|zip:\/\/|phar:\/\/|expect:\/\/|http:\/\/|https:\/\/|Content-Type:|Content-Security-Policy:|Authorization:|Set-Cookie:|eyJ|<svg|<img|cmd=|exec\(|system\(|Runtime\.getRuntime|ProcessBuilder|powershell|bash\s+-c|\/bin\/sh)/i.test(text);
-};
-const hasCommandPrefix = value => /^(sudo\s+|curl\s+|wget\s+|python\d?\s+|php\s+|bash\s+|sh\s+|powershell\s+|cmd\s+|certutil\s+|nc\s+|ncat\s+|socat\s+|msfconsole\s+|sqlmap\s+|redis-cli\s+|mysql\s+|psql\s+|ldapsearch\s+)/i.test(String(value || '').trim());
-const looksCopyableLine = line => {
-  const trimmed = String(line || '').trim();
-  if (!trimmed) return false;
-  if (hasPayloadPattern(trimmed) || hasCommandPrefix(trimmed)) return true;
-  if (/^(['"`)]?\s*(OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|EXEC|WAITFOR|SLEEP|ORDER\s+BY)\b)/i.test(trimmed)) return true;
-  if (!hasHanText(trimmed)) return true;
-  return false;
-};
-
-const stripInlineChineseNotes = line => String(line || '')
-  .replace(/\s+#\s*[\p{Script=Han}].*$/u, '')
-  .replace(/\s+\/\/\s*[\p{Script=Han}].*$/u, '')
-  .replace(/\s*（[^）]*[\p{Script=Han}][^）]*）/gu, '')
-  .replace(/\s*\([^)]*[\p{Script=Han}][^)]*\)/gu, '')
-  .trim();
-
-const extractCopyableValue = line => {
-  const trimmed = String(line || '').trim();
-  if (/^([a-z][a-z0-9+.-]*:\/\/|[a-z][a-z0-9+.-]*:|[A-Za-z]:\\|Content-[\w-]+:|Authorization:|Cookie:|Set-Cookie:|Host:|User-Agent:)/i.test(trimmed)) {
-    return { keep: stripInlineChineseNotes(trimmed), note: '' };
-  }
-  const labeled = trimmed.match(/^([^:：]{2,32})[:：]\s*(.+)$/u);
-  if (labeled && hasHanText(labeled[1]) && looksCopyableLine(labeled[2])) {
-    return { keep: stripInlineChineseNotes(labeled[2]), note: labeled[1].trim() };
-  }
-  const withoutNotes = stripInlineChineseNotes(trimmed);
-  if (!withoutNotes) return { keep: '', note: trimmed };
-  if (!looksCopyableLine(withoutNotes)) return { keep: '', note: trimmed };
-  return { keep: withoutNotes, note: withoutNotes === trimmed ? '' : trimmed };
-};
-
-const appendZhNotes = (description, notes) => {
-  const cleanNotes = [...new Set(notes.map(note => String(note || '').trim()).filter(Boolean))];
-  if (!cleanNotes.length) return description;
-  const noteText = `说明：${cleanNotes.join('；')}`;
-  if (isObject(description)) {
-    return {
-      ...description,
-      zh: [description.zh, noteText].filter(Boolean).join(' '),
-      en: description.en || '',
-    };
-  }
-  if (typeof description === 'string' && description.trim()) {
-    return { zh: `${description.trim()} ${noteText}`, en: description.trim() };
-  }
-  return { zh: noteText, en: '' };
-};
-
-const appendCleanNotes = (description, notes) => {
-  const cleanNotes = [...new Set(notes.map(note => String(note || '').trim()).filter(Boolean))];
-  if (!cleanNotes.length) return description;
-  if (isObject(description)) return description;
-  if (typeof description === 'string' && description.trim()) {
-    return { zh: description.trim(), en: description.trim() };
-  }
-  return { zh: '可直接复制的载荷变体。', en: 'Copyable payload variants.' };
-};
-
-const commandOverrides = new Map();
-const commandEntryMetadataOverrides = new Map();
-const extraWafBypassEntries = new Map();
-const payloadSpecificExecutionSupplementEntries = new Map();
-const payloadSpecificWafSupplementEntries = new Map();
-const extendedBurpDictionaryExecutionSupplementEntries = [];
-const extendedBurpDictionaryWafSupplementEntries = [];
-const mergeSupplementEntries = () => {};
-
-const normalizeHumanPlaceholders = value => String(value || '')
-  .replace(/\[任意Origin\]|\[请求的Origin\]/gu, '{ORIGIN}')
-  .replace(/<MySQL协议数据包>/gu, '<MYSQL_PROTOCOL_PACKET>')
-  .replace(/<FastCGI数据包>/gu, '<FASTCGI_PACKET>')
-  .replace(/\[sqlmap生成的payload\]/gu, '<SQLMAP_GENERATED_PAYLOAD>')
-  .replace(/点击领取红包/gu, 'Click to claim')
-  .replace(/>点击</gu, '>Click<');
 
 const destructiveDbCleanupPattern = /(DROP(?:\s|%20|\+)+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE(?:\s|%20|\+)+TABLE|FLUSHALL|FLUSHDB)/i;
-
-const isWorkflowOnlyLine = value => {
-  const line = String(value || '').trim();
-  if (!line) return false;
-  return destructiveDbCleanupPattern.test(line);
-};
-
-const normalizeCopyTargets = value => normalizeHumanPlaceholders(value)
-  .replace(/\btarget\.com\b/giu, '{TARGET}')
-  .replace(/\battacker\.com\b/giu, 'attacker.test')
-  .replace(/\bevil\.com\b/giu, 'attacker.test')
-  .replace(/https?:\/\/target\//giu, 'http://{TARGET}/')
-  .replace(/https?:\/\/target\b/giu, 'http://{TARGET}');
-
-const isScriptResidueLine = value => {
-  const line = String(value || '').trim();
-  if (!line) return false;
-  return false;
-};
-
-const hasDirectPayloadSignal = value => {
-  const text = String(value || '');
-  return /(<script|<iframe|<style|<svg|<img|onerror=|onload=|javascript:|UNION\s+SELECT|SELECT\s+|OR\s+1=1|SLEEP\(|WAITFOR|ORDER\s+BY|\/\.\.\/|<!ENTITY|<\?xml|{{|}}|\$\{|%[0-9a-f]{2}|\\u[0-9a-f]{4}|gopher:\/\/|file:\/\/|dict:\/\/|ldap:\/\/|php:\/\/|data:\/\/|zip:\/\/|phar:\/\/|expect:\/\/|https?:\/\/|Content-[\w-]+:|Transfer-Encoding:|Authorization:|Cookie:|Set-Cookie:|Host:|User-Agent:|filename=|eyJ|cmd=|exec\(|system\(|Runtime\.getRuntime|ProcessBuilder|fetch\(|\/bin\/sh)/i.test(text);
-};
-
-const hasCopyableShape = value => {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return false;
-  if (hasDirectPayloadSignal(trimmed) || hasCommandPrefix(trimmed)) return true;
-  if (/^(['"`)]?\s*(OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|EXEC|WAITFOR|SLEEP|ORDER\s+BY)\b)/i.test(trimmed)) return true;
-  if (/^[A-Za-z][A-Za-z0-9_-]+=[^=]/.test(trimmed)) return true;
-  if (/^[A-Za-z][\w-]*:\s*\S+/.test(trimmed)) return true;
-  if (/^[./?%<>'"`{}\[\]($&|;\\-]/.test(trimmed)) return true;
-  if (/[\s./?%<>'"`()[\]{}=$;&|\\-]/.test(trimmed) && trimmed.length > 3) return true;
-  return false;
-};
-
-const removeInlineHumanNotes = line => normalizeCopyTargets(line)
-  .replace(/\s+#\s*[\p{Script=Han}].*$/u, '')
-  .replace(/\s+\/\/\s*[\p{Script=Han}].*$/u, '')
-  .replace(/\s*\/\*[\s\S]*?[\p{Script=Han}][\s\S]*?\*\//gu, '')
-  .replace(/\s*<!--[\s\S]*?[\p{Script=Han}][\s\S]*?-->/gu, '')
-  .replace(/\s*\([^)]*[\p{Script=Han}][^)]*\)/gu, '')
-  .replace(/(<\/?(?:html|body|head|style|script)[^>]*>),\s*$/i, '$1')
-  .trimEnd();
-
-const isGeneratedDataFragmentLine = line => /^\s*(\{\s*part\s*:|explanation\s*:|type\s*:)/.test(line);
-
-const extractCommentPayload = line => {
-  const trimmed = String(line || '').trim();
-  const markerMatch = trimmed.match(/^(?:#|\/\/)\s*(.+)$/);
-  const htmlMatch = trimmed.match(/^<!--\s*(.+?)\s*-->$/);
-  const value = normalizeCopyTargets(markerMatch?.[1] || htmlMatch?.[1] || '').trim();
-  if (!value || hasHanText(value) || /^\d+[\.)]/.test(value) || /^[-*]\s/.test(value)) {
-    return { keep: '', note: trimmed };
-  }
-  return hasCopyableShape(value) ? { keep: value, note: trimmed } : { keep: '', note: trimmed };
-};
-
-const extractCodeBlockLine = line => {
-  const raw = String(line || '').replace(/\s+$/g, '');
-  const trimmed = raw.trim();
-  if (!trimmed) return { keep: '', note: '' };
-  if (/^#[A-Za-z0-9_-]+\s*\{/.test(trimmed)) return { keep: raw, note: '' };
-  if (/^(#|\/\/|<!--)/.test(trimmed)) return extractCommentPayload(trimmed);
-
-  const cleaned = removeInlineHumanNotes(raw);
-  if (!cleaned.trim()) return { keep: '', note: trimmed };
-  if (isWorkflowOnlyLine(cleaned) || isScriptResidueLine(cleaned)) return { keep: '', note: trimmed };
-  if (hasHanText(cleaned)) return { keep: '', note: trimmed };
-  return { keep: cleaned, note: cleaned.trim() === trimmed ? '' : trimmed };
-};
-
-const extractCopyableCommandLine = (line, preserveIndent = false) => {
-  const raw = String(line || '').replace(/\s+$/g, '');
-  const trimmed = raw.trim();
-  if (!trimmed) return { keep: '', note: '' };
-  if (preserveIndent) return extractCodeBlockLine(line);
-  if (/^(#|\/\/|<!--)/.test(trimmed)) return extractCommentPayload(trimmed);
-
-  const cleaned = removeInlineHumanNotes(raw);
-  const candidate = preserveIndent ? cleaned : cleaned.trim();
-  if (!candidate) return { keep: '', note: trimmed };
-  if (isWorkflowOnlyLine(candidate) || isScriptResidueLine(candidate)) return { keep: '', note: trimmed };
-  const labeled = candidate.match(/^([^:：]{2,48})[:：]\s*(.+)$/u);
-  if (labeled && hasHanText(labeled[1])) {
-    const value = removeInlineHumanNotes(labeled[2]).trim();
-    if (value && !hasHanText(value) && hasCopyableShape(value)) {
-      return { keep: value, note: labeled[1].trim() };
-    }
-  }
-  if (hasHanText(candidate)) return { keep: '', note: trimmed };
-  if (!hasCopyableShape(candidate)) return { keep: '', note: trimmed };
-  return { keep: candidate, note: candidate.trim() === trimmed ? '' : trimmed };
-};
-
-const isCodeLikeBlock = command => {
-  const value = String(command || '');
-  return /\n/.test(value) && /(<\?xml|<!DOCTYPE|<html|<style|<script|POST\s+\/|GET\s+\/|PUT\s+\/|PATCH\s+\/|DELETE\s+\/|HTTP\/1\.1|Content-Type:|Host:|Authorization:|Cookie:|\[\s*\{|^\s*\{[\s\S]*"query"|fetch\()/i.test(value);
-};
-
 const trimBlankEdges = lines => {
   const result = [...lines];
   while (result.length && !String(result[0]).trim()) result.shift();
@@ -1611,18 +1414,6 @@ const scrubDestructivePayloadCommands = payload => {
 
 const commandSignature = value => String(value || '').trim().replace(/\s+/g, ' ');
 
-const appendUniqueCommandEntries = (base, additions) => {
-  const result = [...base];
-  const seen = new Set(result.map(entry => commandSignature(entry.command)).filter(Boolean));
-  for (const entry of additions) {
-    const signature = commandSignature(entry.command);
-    if (!signature || seen.has(signature)) continue;
-    result.push(entry);
-    seen.add(signature);
-  }
-  return result;
-};
-
 const dedupeCommandEntries = entries => {
   const result = [];
   const seen = new Set();
@@ -1647,33 +1438,6 @@ const replaceI18nPhrase = (value, zhNeedle, zhReplacement, enNeedle, enReplaceme
       zh: value.zh.replaceAll(zhNeedle, zhReplacement),
       en: value.en.replaceAll(enNeedle, enReplacement),
     };
-  }
-  return value;
-};
-
-const postNormalizeVisibleTitle = value => {
-  if (typeof value === 'string') {
-    let next = value.trim();
-    if (!next) return next;
-    next = next
-      .replace(/Content-Type(?:\s+variants?|\s+鍙樹綋)+/gi, 'Content-Type variants')
-      .replace(/(variants)(?:\s+\1)+/gi, '$1')
-      .replace(/(Bypass)(?:\s+\1)+/gi, '$1')
-      .replace(/Exploitationunsafe-inline/gi, 'unsafe-inline variants')
-      .replace(/Data URIBypass/gi, 'Data URI bypass')
-      .replace(/AngularJSBypass/gi, 'AngularJS bypass')
-      .replace(/pointnumberBypass/gi, 'Trailing-dot bypass')
-      .replace(/NTFS stream/gi, 'NTFS alternate data streams')
-      .replace(/Image Webshell/gi, 'Image polyglot sample');
-    return next;
-  }
-  if (isObject(value) && typeof value.zh === 'string' && typeof value.en === 'string') {
-    let zh = value.zh.trim();
-    zh = zh
-      .replace(/Content-Type(?:\s+鍙樹綋)+/g, 'Content-Type 鍙樹綋')
-      .replace(/鍙樹綋(?:\s*鍙樹綋)+/g, '鍙樹綋');
-    const en = postNormalizeVisibleTitle(value.en);
-    return { ...value, zh, en };
   }
   return value;
 };
@@ -1842,338 +1606,7 @@ const looksLikeSentenceTitle = value => {
   return text.length > 36 || /dictionary|payloads|variants|sample|samples|requests|targets|probes/i.test(text);
 };
 
-const directWebshellPattern = /<\?php|<%|<jsp:|<script\s+runat=|Runtime\.getRuntime|ProcessBuilder|system\s*\(|eval\s*\(|assert\s*\(|passthru\s*\(|shell_exec\s*\(|call_user_func|ReflectionFunction|exec\s*\(/i;
-const directPayloadPattern = /<script|<iframe|<svg|<img|onerror=|onload=|javascript:|UNION\s+(?:ALL\s+|DISTINCT\s+)?SELECT|OR\s+1\s*=\s*1|AND\s+1\s*=\s*1|SLEEP\s*\(|WAITFOR\s+DELAY|ORDER\s+BY|<!DOCTYPE|<\?xml|{{|}}|\$\{|%[0-9a-f]{2}|\\u[0-9a-f]{4}|gopher:\/\/|file:\/\/|dict:\/\/|ldap:\/\/|php:\/\/|data:\/\/|zip:\/\/|phar:\/\/|expect:\/\/|eyJ|"\s*alg"\s*:|filename=|Content-Disposition:|Transfer-Encoding:|Authorization:|Cookie:|Set-Cookie:/i;
-const rawHttpRequestPattern = /^\s*(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\S+\s+HTTP\/1\.[01]/im;
-const urlPayloadPattern = /^\s*(?:[/?]|https?:\/\/|file:\/\/|gopher:\/\/|dict:\/\/|php:\/\/|data:\/\/|ldap:\/\/|zip:\/\/|phar:\/\/|expect:\/\/)/im;
-const structuredPayloadPattern = /^\s*(?:[{[]|"scripts"\s*:|"name"\s*:|on:\s*$|jobs:\s*$|permissions:\s*$|\$\{\{\s*github\.event\.)/im;
-const minimalCommandPayloadPattern = /^\s*(?:[;&|`()]|\$\()?[\s`$(){};&|]*(?:id|whoami|pwd|hostname|uname|cat\s+\/|ls\s+\/|dir\b|ipconfig\b|ifconfig\b)/im;
-const workflowTextPattern = /(^|\n)\s*#?\s*(?:安装|常见|检测|分析|观察|如果|需要|步骤|使用工具|默认|说明|访问|复制|确认|记录|测试流程|Burp\s+Intruder|git\s+clone|cd\s+|bundle\s+install)/i;
-const toolCommandPattern = /^\s*(?:curl|wget|nmap|sqlmap|ffuf|gobuster|dirsearch|hydra|john|hashcat|git|python\d?|node|npm|java|jar|openssl|redis-cli|mysql|psql|ldapsearch|powershell|cmd|net\s+|wmic|mimikatz|SharpHound|bloodhound-python)\b/im;
-
-const payloadEntryPriority = (entry, index) => {
-  const command = String(entry?.command || '');
-  const title = `${textValue(entry?.title)} ${textValue(entry?.description)}`;
-  if (!command.trim()) return 1000 + index;
-  if (directWebshellPattern.test(command)) return 0 + index / 1000;
-  if (rawHttpRequestPattern.test(command)) return 10 + index / 1000;
-  if (urlPayloadPattern.test(command)) return 12 + index / 1000;
-  if (structuredPayloadPattern.test(command)) return 14 + index / 1000;
-  if (toolCommandPattern.test(command) || workflowTextPattern.test(command)) return 80 + index / 1000;
-  if (directPayloadPattern.test(command) || minimalCommandPayloadPattern.test(command)) return 20 + index / 1000;
-  if (/^(?:GET|POST|PUT|PATCH|DELETE|OPTIONS)\s+\S+\s+HTTP\/1\.[01]/im.test(command)) return 20 + index / 1000;
-  if (/^\s*(?:[/?]|https?:\/\/|file:\/\/|gopher:\/\/|dict:\/\/|php:\/\/|data:\/\/)/im.test(command)) return 30 + index / 1000;
-  if (/payload|webshell|注入|绕过|bypass|shell/i.test(title)) return 40 + index / 1000;
-  if (toolCommandPattern.test(command) || workflowTextPattern.test(command)) return 80 + index / 1000;
-  return 60 + index / 1000;
-};
-
-const prioritizePayloadEntries = entries => normalizeList(entries)
-  .map((entry, index) => ({ entry, index, priority: payloadEntryPriority(entry, index) }))
-  .sort((left, right) => left.priority - right.priority || left.index - right.index)
-  .map(item => item.entry);
-
-const tutorialTextIsShort = value => String(textValue(value) || '').trim().replace(/\s+/g, ' ').length < 56;
-
-const completePayloadTutorial = payload => {
-  const tutorial = isObject(payload?.tutorial) ? { ...payload.tutorial } : {};
-  const name = textValue(payload?.name) || payload?.id || '当前条目';
-  const category = textValue(payload?.category) || '安全测试';
-  const profileTutorial = materializeTutorialQualityValue(payloadQualityProfileFor(payload), payload);
-  const fallback = {
-    overview: i18n(
-      `${name} 用于在授权环境中验证 ${category} 场景下的漏洞触发条件、可控输入点和影响范围。Payload 列表提供可直接复制的标准载荷与 WAF 绕过载荷，便于快速建立测试基线。`,
-      `${name} is used in authorized environments to validate trigger conditions, controllable inputs, and impact in the ${category} scenario. The payload list provides copyable standard and WAF-bypass payloads for quick baseline testing.`
-    ),
-    vulnerability: i18n(
-      `${name} 的核心原理通常是服务端对用户输入、协议解析、权限边界、文件落点、状态流转或安全策略的处理不一致。测试时需要确认输入是否进入真实危险点，以及防护是否只停留在前端、代理或单一过滤规则上。`,
-      `The core principle of ${name} is usually inconsistent handling of user input, protocol parsing, permission boundaries, file sinks, state transitions, or security policy. Testing should confirm whether input reaches the real sink and whether defenses exist only in the frontend, proxy, or a single filter.`
-    ),
-    exploitation: i18n(
-      `先在标准模式复制最小 payload 验证可控点，再根据响应回显、时间差、文件落点、回连、权限变化或状态变化判断漏洞是否成立；遇到拦截时切换右上角 WAF 绕过模式，比较编码、大小写、分隔符、重复参数、协议和解析差异。`,
-      `First copy a minimal payload in standard mode to validate the controllable point, then judge by response output, timing, file sink, callback, permission change, or state change. If blocked, switch the top-right selector to WAF bypass mode and compare encoding, case, separators, duplicate parameters, protocol, and parser differences.`
-    ),
-    mitigation: i18n(
-      `防护应放在服务端权威路径上，先做统一规范化，再使用白名单、参数化或安全 API、最小权限、隔离执行/存储、严格鉴权和状态校验；同时保留审计日志、异常告警，并为 ${name} 对应入口补充回归测试。`,
-      `Mitigation should live on server-authoritative paths: normalize first, then use allowlists, parameterization or safe APIs, least privilege, isolated execution/storage, strict authorization, and state checks. Keep audit logs, alert on anomalies, and add regression tests for the ${name} entry point.`
-    ),
-  };
-  for (const field of ['overview', 'vulnerability', 'exploitation', 'mitigation']) {
-    if (tutorialTextIsShort(tutorial[field]) || tutorialFieldNeedsRefresh(tutorial[field])) {
-      tutorial[field] = isObject(profileTutorial) && profileTutorial[field] ? profileTutorial[field] : fallback[field];
-    }
-  }
-  if (!tutorial.difficulty) tutorial.difficulty = payload?.tutorial?.difficulty || 'beginner';
-  return tutorial;
-};
-
-const payloadFinalOverrides = new Map();
-
-const applyPayloadFinalOverrides = payload => {
-  if (!isObject(payload) || !payload.id) return payload;
-  const override = payloadFinalOverrides.get(payload.id);
-  const next = { ...payload };
-  if (override) {
-    if (override.name) next.name = ensureDisplayTextObject(override.name);
-    if (override.analysis) next.analysis = ensureDisplayTextObject(override.analysis);
-    if (override.category) next.category = ensureDisplayTextObject(override.category);
-    if (override.subCategory) next.subCategory = ensureDisplayTextObject(override.subCategory);
-    if (override.tutorial) {
-      next.tutorial = {
-        ...(isObject(next.tutorial) ? next.tutorial : {}),
-        overview: ensureDisplayTextObject(override.tutorial.overview),
-        vulnerability: ensureDisplayTextObject(override.tutorial.vulnerability),
-        exploitation: ensureDisplayTextObject(override.tutorial.exploitation),
-        mitigation: ensureDisplayTextObject(override.tutorial.mitigation),
-        difficulty: override.tutorial.difficulty || next.tutorial?.difficulty || 'beginner',
-      };
-    }
-  }
-  if (isObject(next.tutorial)) {
-    if (next.id === 'django-vuln' && isObject(next.tutorial.exploitation)) {
-      next.tutorial.exploitation = ensureDisplayTextObject(i18n(
-        '应先确认 Django 版本、部署模式和关键安全配置，再结合实际功能判断是信息泄露、认证边界、模板注入、查询风险还是签名数据风险。把“框架默认安全”与“业务侧误用框架能力”区分开来看。',
-        'First confirm the Django version, deployment mode, and key security settings, then determine whether the real risk lies in disclosure, authentication boundaries, template injection, query behavior, or signed-data handling. Separate Django’s default protections from how the application misuses framework capabilities.'
-      ));
-    }
-    if (next.id === 'asreproasting' && isObject(next.tutorial.exploitation)) {
-      next.tutorial.exploitation = ensureDisplayTextObject(i18n(
-        '学习时应先理解 Kerberos AS-REQ/AS-REP 交换流程，再区分普通账户与禁用预身份验证账户的差异，最后结合目录查询和日志判断哪些请求真正构成风险暴露。',
-        'When studying the issue, first understand the Kerberos AS-REQ/AS-REP exchange, then distinguish standard accounts from those with pre-authentication disabled, and finally use directory queries plus logs to determine which requests actually expose risk.'
-      ));
-    }
-    if (next.id === 'overpass-the-hash' && isObject(next.tutorial.overview)) {
-      next.tutorial.overview = ensureDisplayTextObject(i18n(
-        'Overpass-the-Hash 利用 NTLM 哈希去获取 Kerberos 票据，本质上是把已掌握的凭证材料转换成新的认证上下文。它常出现在攻击者已经拿到哈希、但仍希望进入 Kerberos 生态继续横向的场景。',
-        'Overpass-the-Hash uses an NTLM hash to obtain Kerberos tickets, effectively converting already captured credential material into a new authentication context. It commonly appears when an attacker already has a hash but wants to keep moving inside the Kerberos ecosystem.'
-      ));
-    }
-  }
-  return next;
-};
-
-const finalizePublicPayload = payload => {
-  if (!isObject(payload)) return payload;
-  const next = { ...payload };
-  next.execution = prioritizePayloadEntries(dedupeCommandEntries(next.execution));
-  const wafBypass = prioritizePayloadEntries(dedupeCommandEntries(next.wafBypass));
-  if (wafBypass.length) next.wafBypass = wafBypass;
-  else delete next.wafBypass;
-  next.tutorial = completePayloadTutorial(next);
-  return applyPayloadFinalOverrides(next);
-};
-
-const curateStoredPayloadCommands = payload => {
-  if (!isObject(payload) || !payload.id) return payload;
-  const next = { ...payload };
-  const originalExecution = normalizeList(next.execution).filter(entry => entry?.command);
-  const curatedExecution = originalExecution
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: next.id, area: 'execution', index }))
-    .filter(Boolean);
-  next.execution = curatedExecution.length ? curatedExecution : originalExecution;
-  const originalWafBypass = normalizeList(next.wafBypass).filter(entry => entry?.command);
-  const wafBypass = originalWafBypass
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: next.id, area: 'wafBypass', index }))
-    .filter(Boolean);
-  if (wafBypass.length) next.wafBypass = wafBypass;
-  else if (originalWafBypass.length) next.wafBypass = originalWafBypass;
-  else delete next.wafBypass;
-  return next;
-};
-
-const curatedSupplementEntries = (entries, payloadId, area) => normalizeList(entries)
-  .map((entry, index) => curateCommandEntry(entry, { payloadId, area, index }))
-  .filter(Boolean);
-
-const applyPayloadRuntimeSupplements = payload => {
-  if (!isObject(payload) || !payload.id) return payload;
-  const next = { ...payload };
-  const executionSupplement = curatedSupplementEntries(payloadSpecificExecutionSupplementEntries.get(next.id), next.id, 'runtimeExecutionSupplement');
-  if (executionSupplement.length) {
-    next.execution = appendUniqueCommandEntries(normalizeList(next.execution), executionSupplement);
-  }
-
-  let wafBypass = normalizeList(next.wafBypass);
-  const extraWafSupplement = curatedSupplementEntries(extraWafBypassEntries.get(next.id), next.id, 'runtimeExtraWafBypass');
-  if (extraWafSupplement.length) wafBypass = appendUniqueCommandEntries(wafBypass, extraWafSupplement);
-  const specificWafSupplement = curatedSupplementEntries(payloadSpecificWafSupplementEntries.get(next.id), next.id, 'runtimeWafSupplement');
-  if (specificWafSupplement.length) wafBypass = appendUniqueCommandEntries(wafBypass, specificWafSupplement);
-  if (wafBypass.length) next.wafBypass = wafBypass;
-  return next;
-};
-
-const mergeModeOnlyPayloadsIntoTargets = payloads => {
-  const byId = new Map(normalizeList(payloads).map(payload => [payload.id, { ...payload }]));
-  for (const [sourceId, targetIds] of modeOnlyPayloadMergeTargets) {
-    const source = byId.get(sourceId);
-    if (!source) continue;
-    const sourceEntries = [
-      ...normalizeList(source.execution),
-      ...normalizeList(source.wafBypass),
-    ];
-    for (const targetId of targetIds) {
-      const target = byId.get(targetId);
-      if (!target) continue;
-      target.wafBypass = appendUniqueCommandEntries(normalizeList(target.wafBypass), sourceEntries);
-      byId.set(targetId, target);
-    }
-  }
-  return normalizeList(payloads)
-    .filter(payload => !modeOnlyPayloadIds.has(payload.id))
-    .map(payload => byId.get(payload.id) || payload);
-};
-
-const curateCommandEntry = (entry, context = {}) => {
-  const key = `${context.payloadId || ''}:${context.area || ''}:${context.index ?? ''}`;
-  const hasOverride = commandOverrides.has(key);
-  const rawMetadataOverride = commandEntryMetadataOverrides.get(key) || {};
-  const metadataOverride = {
-    ...rawMetadataOverride,
-    ...(rawMetadataOverride.title ? { title: normalizeVisibleCommandTitle(rawMetadataOverride.title) } : {}),
-    ...(rawMetadataOverride.description ? { description: normalizeVisibleCommandDescription(rawMetadataOverride.description) } : {}),
-  };
-  const command = commandOverrides.get(key) || entry?.command || '';
-  const lines = String(command).split(/\r?\n/);
-  const preserveIndent = isCodeLikeBlock(command);
-  const kept = [];
-  const notes = [];
-  let skippingGeneratedFragment = false;
-  for (const line of lines) {
-    if (skippingGeneratedFragment) {
-      if (/^\s*\]\s*,?\s*$/.test(line)) skippingGeneratedFragment = false;
-      continue;
-    }
-    if (/syntaxBreakdown\s*:/.test(line)) {
-      skippingGeneratedFragment = true;
-      continue;
-    }
-    if (isGeneratedDataFragmentLine(line)) continue;
-    if (!String(line).trim()) {
-      if (kept.length) kept.push('');
-      continue;
-    }
-    const extracted = extractCopyableCommandLine(line, preserveIndent);
-    if (extracted.keep) {
-      kept.push(extracted.keep);
-    }
-    if (extracted.note) {
-      notes.push(extracted.note);
-    }
-  }
-  const commandLines = normalizeCommandLines(kept);
-  if (!commandLines.length) return null;
-  const description = metadataOverride.description
-    ? metadataOverride.description
-    : normalizeVisibleCommandDescription(appendCleanNotes(entry.description, notes));
-  return {
-    ...entry,
-    ...metadataOverride,
-    title: normalizeVisibleCommandTitle(metadataOverride.title || entry?.title),
-    command: commandLines.join('\n'),
-    description,
-    syntaxBreakdown: hasOverride ? undefined : entry.syntaxBreakdown,
-  };
-};
-
-const curateAttackChainStep = (step, context = {}) => {
-  if (!isObject(step)) return null;
-  const next = { ...step };
-  if (step.payload) {
-    const curatedPayload = curateCommandEntry(
-      {
-        title: step.title,
-        command: step.payload,
-        description: step.description,
-      },
-      { ...context, area: 'attackChain' }
-    );
-    if (curatedPayload?.command) {
-      next.payload = curatedPayload.command;
-      next.description = curatedPayload.description;
-    } else {
-      delete next.payload;
-    }
-  }
-  return next;
-};
-
-const curatePayload = payload => {
-  let execution = normalizeList(payload.execution)
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: payload.id, area: 'execution', index }))
-    .filter(Boolean);
-  const specificExecutionSupplement = normalizeList(payloadSpecificExecutionSupplementEntries.get(payload.id))
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: payload.id, area: 'executionSupplement', index }))
-    .filter(Boolean);
-  if (specificExecutionSupplement.length) execution = appendUniqueCommandEntries(execution, specificExecutionSupplement);
-  if (!execution.length) return null;
-  const item = { ...payload, execution };
-  const attackChain = normalizeList(payload.attackChain)
-    .map((step, index) => curateAttackChainStep(step, { payloadId: payload.id, index }))
-    .filter(Boolean);
-  if (attackChain.length) item.attackChain = attackChain;
-  let wafBypass = normalizeList(payload.wafBypass)
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: payload.id, area: 'wafBypass', index }))
-    .filter(Boolean);
-  const extraWafBypass = normalizeList(extraWafBypassEntries.get(payload.id))
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: payload.id, area: 'extraWafBypass', index }))
-    .filter(Boolean);
-  if (extraWafBypass.length) wafBypass = appendUniqueCommandEntries(wafBypass, extraWafBypass);
-  if (!wafBypass.length) {
-    const fallbackWafBypass = materializeQualityValue(payloadQualityProfileFor(payload)?.wafBypass, payload);
-    wafBypass = normalizeList(fallbackWafBypass)
-      .map((entry, index) => curateCommandEntry(entry, { payloadId: payload.id, area: 'wafBypassFallback', index }))
-      .filter(Boolean);
-  }
-  const specificWafSupplement = normalizeList(payloadSpecificWafSupplementEntries.get(payload.id))
-    .map((entry, index) => curateCommandEntry(entry, { payloadId: payload.id, area: 'wafBypassSupplement', index }))
-    .filter(Boolean);
-  if (specificWafSupplement.length) wafBypass = appendUniqueCommandEntries(wafBypass, specificWafSupplement);
-  if (wafBypass.length) item.wafBypass = wafBypass;
-  else delete item.wafBypass;
-  delete item.edrBypass;
-  return scrubLowQualityEnglishContent(scrubRetiredEdrContent(item).value).value;
-};
-
 const isPublicPayloadCandidate = payload => isObject(payload) && typeof payload.id === 'string' && payload.id.trim();
-
-const collectPayloadRefs = (items, refs = new Set()) => {
-  for (const item of normalizeList(items)) {
-    if (item.payloadId) refs.add(item.payloadId);
-    collectPayloadRefs(item.children, refs);
-  }
-  return refs;
-};
-
-const collectToolRefs = (items, refs = new Set()) => {
-  for (const item of normalizeList(items)) {
-    if (item.toolId) refs.add(item.toolId);
-    collectToolRefs(item.children, refs);
-  }
-  return refs;
-};
-
-const filterPayloadNavigation = (items, payloadIds, options = {}) => {
-  const seen = options.seen || new Set();
-  const depth = options.depth || 0;
-  return normalizeList(items).flatMap(item => {
-    const mappedPayloadId = item.payloadId ? (payloadRefAliases.get(item.payloadId) || item.payloadId) : '';
-    if (shouldExcludePayloadNavigationItem(item, mappedPayloadId, depth)) return [];
-    const children = filterPayloadNavigation(item.children, payloadIds, { seen, depth: depth + 1 });
-    const hasValidPayload = mappedPayloadId && payloadIds.has(mappedPayloadId) && !seen.has(mappedPayloadId);
-    if (mappedPayloadId && !hasValidPayload && !children.length) return [];
-    const next = { ...item };
-    if (publicNavigationNameOverrides.has(next.id)) next.name = publicNavigationNameOverrides.get(next.id);
-    if (children.length) next.children = children;
-    else delete next.children;
-    if (hasValidPayload) {
-      next.payloadId = mappedPayloadId;
-      seen.add(mappedPayloadId);
-    } else {
-      delete next.payloadId;
-    }
-    return next.payloadId || next.children?.length ? [next] : [];
-  });
-};
 
 const filterToolNavigation = (items, toolIds) => normalizeList(items).flatMap(item => {
   const children = filterToolNavigation(item.children, toolIds);
@@ -2185,21 +1618,6 @@ const filterToolNavigation = (items, toolIds) => normalizeList(items).flatMap(it
   if (!hasValidTool) delete next.toolId;
   return next.toolId || next.children?.length ? [next] : [];
 });
-
-const curateDefaultPayloadData = (payloads, navigation) => {
-  const curatedPayloads = normalizeList(payloads)
-    .filter(isPublicPayloadCandidate)
-    .map(curatePayload)
-    .filter(Boolean);
-  const publicPayloads = mergeModeOnlyPayloadsIntoTargets(curatedPayloads).map(finalizePublicPayload);
-  const candidateIds = new Set(publicPayloads.map(item => item.id));
-  const curatedNavigation = filterPayloadNavigation(navigation, candidateIds);
-  const visibleIds = collectPayloadRefs(curatedNavigation);
-  return {
-    payloads: publicPayloads.filter(item => visibleIds.has(item.id)),
-    navigation: curatedNavigation,
-  };
-};
 
 const filterStoredPayloadNavigation = (items, payloadIds, options = {}) => {
   const seen = options.seen || new Set();
@@ -2777,8 +2195,6 @@ const migrateJwtSecurityDefaults = (database, defaults) => {
   }
 };
 
-const migratePayloadQualityDefaults = () => {};
-
 const normalizePayloadContentPresentation = payload => {
   if (!isObject(payload)) return payload;
   const normalizeEntry = entry => {
@@ -2825,8 +2241,6 @@ const migratePayloadContentPresentation = database => {
     if (serialized !== row.data) updatePayload.run(serialized, timestamp, row.id);
   }
 };
-
-const migrateExtendedBurpDictionarySupplements = () => {};
 
 const applyDataMigrations = async database => {
   const defaults = await loadDefaultData();
