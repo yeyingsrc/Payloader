@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>自定义 Payload - Payloader Admin</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 32px; max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #888; font-size: 13px; margin-bottom: 28px; }
+    .sub a { color: inherit; }
+    label { display: block; font-size: 13px; color: #aaa; margin: 16px 0 6px; }
+    input[type=text], input[type=password], textarea {
+      width: 100%; padding: 10px 12px; border-radius: 6px;
+      border: 1px solid var(--border-color, #333);
+      background: var(--bg-secondary, #111); color: inherit;
+      font-size: 14px; box-sizing: border-box;
+    }
+    textarea { font-family: monospace; resize: vertical; min-height: 220px; font-size: 13px; }
+    .row { display: flex; gap: 10px; margin-top: 24px; }
+    button { padding: 10px 24px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; }
+    .btn-save { background: var(--accent-color, #00ff88); color: #000; }
+    .btn-back { background: transparent; border: 1px solid #444; color: inherit; }
+    .btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+    .msg { margin-top: 14px; padding: 10px 14px; border-radius: 6px; font-size: 13px; display: none; }
+    .msg-ok  { background: #0a3020; color: #00cc66; border: 1px solid #00cc66; }
+    .msg-err { background: #3a1010; color: #ff4444; border: 1px solid #ff4444; }
+    #list { margin-top: 36px; }
+    #list h2 { font-size: 16px; margin-bottom: 10px; }
+    .item-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #222; }
+    .item-name { flex: 1; font-size: 14px; }
+    .btn-del { background: transparent; border: 1px solid #444; color: #ff4444; padding: 4px 12px; font-size: 12px; border-radius: 4px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>📝 自定义 Payload 管理</h1>
+  <p class="sub">直接粘贴文本内容，保存后在前台<strong>「自定义」</strong>tab 里显示。&nbsp;&nbsp;<a href="/admin">← 返回后台首页</a></p>
+
+  <label for="name">名称（显示在前台侧边栏）</label>
+  <input type="text" id="name" placeholder="例：SQL注入速查表" />
+
+  <label for="content">内容（支持纯文本 / Markdown，直接粘贴即可）</label>
+  <textarea id="content" placeholder="粘贴你的内容..."></textarea>
+
+  <label for="password">管理员密码</label>
+  <input type="password" id="password" placeholder="后台登录密码" />
+
+  <div class="row">
+    <button class="btn-save" id="save-btn">保存</button>
+    <button class="btn-back" id="back-btn">返回后台</button>
+  </div>
+  <div id="msg" class="msg"></div>
+  <div id="list"></div>
+
+  <script src="/admin/custom.js"></script>
+</body>
+</html>

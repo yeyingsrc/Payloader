@@ -2221,7 +2221,7 @@ const a1z26Encode = (value: string, separator: string) => Array.from(value.toUpp
 
 const a1z26Decode = (value: string) => value
   .trim()
-  .split(/[\s,;|/.\-]+/)
+  .split(/[\s,;|/.-]+/)
   .filter(Boolean)
   .map(token => {
     const number = Number.parseInt(token, 10);
@@ -2241,7 +2241,7 @@ const morseDecode = (value: string) => value
 
 // Pollux cipher: digits represent ·  —  × (dot/dash/separator) based on a key
 // Common CTF variant: 0=dot(·), 1=dash(—), 8/9=separator; others are noise
-const polluxDecode = (value: string, _mapping = '01234567 89') => {
+const polluxDecode = (value: string) => {
   // mapping[digit] → '.', '-', ' ', or noise (skip)
   // default mapping: 0→. 1→- 2→. 3→- 4→. 5→- 6→. 7→- 8→' ' 9→' '
   const dotChars = new Set('024');
@@ -13040,7 +13040,7 @@ const looksLikeResolvedSmartDecodeText = (value: string) => {
   if (!text) return false;
   if (/flag\{|ctf\{|picoctf\{|htb\{|thm\{|key\{|crypto\{|dice\{|wctf\{|utflag\{|hsctf\{|sdctf\{|dctf\{|nahamcon\{|ductf\{|bcactf\{|uiuctf\{|pbctf\{|corctf\{|sekai\{|idek\{|bi0s\{|glacierctf\{|rgbctf\{|zer0pts\{|watevr\{|darkctf\{|secureflag\{|actf\{|seccon\{|sunshine\{|ritsec\{|magpie\{|crew\{|squ1rrel\{|nitro\{|mapna\{|cakectf\{|dragonctf\{|lactf\{|wanictf\{|jerseyctf\{|b01lers\{|sunshinectf\{/i.test(text)) return true;
   // Generic CTF flag: word{ ... } but exclude common encoding/intermediate prefixes
-  if (/\b[a-z]{2,12}\{[A-Za-z0-9_!@#$%^&*.\-]{4,}\}/i.test(text) &&
+  if (/\b[a-z]{2,12}\{[A-Za-z0-9_!@#$%^&*.-]{4,}\}/i.test(text) &&
     !/\b(?:b64|hex|url|rot|xor|enc|dec|utf|msg|str|txt|raw|out|res|key|val|data|base|code|text|byte|hash)\{/i.test(text))
     return true;
   if (/^<[a-z!?/][\s\S]*>$/i.test(text) && printableRatio(utf8Encoder.encode(text)) > 0.9) return true;
@@ -13264,7 +13264,7 @@ const trySmartModDecode = (value: string): string | null => {
 const smartDecode = async (value: string): Promise<string> => {
   // Strip common CTF output noise prefixes: "Flag: ", "[*] Encrypted: ", ">>> cipher =", etc.
   const stripped = value
-    .replace(/^\s*\[[\*\+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
+    .replace(/^\s*\[[*+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
     .replace(/^\s*(?:\w+[ \t]+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature|nonce|iv|salt|seed|pt|value|flag_enc|flag_hex)\b[ \t]*(?:\w+[ \t]*)?(?:\([^\r\n)]*\)[ \t]*)?(?:is[ \t]*)?[:=][ \t]*/i, '')
     .trim();
@@ -13347,7 +13347,7 @@ const smartDecode = async (value: string): Promise<string> => {
       /\\u\{?[0-9a-fA-F]{2,}/.test(current) || /\\x[0-9a-fA-F]{2}/.test(current) ? tryDecode('Unicode/Hex Escape', current, unicodeDecode) : null,
       /\+[A-Za-z0-9/]+-|\+-/.test(current) ? tryDecode('UTF-7', current, utf7Decode) : null,
       /^[0-9a-fA-Fx\\\s]+$/.test(current) && current.replace(/[^0-9a-fA-F]/g, '').length >= 4
-        && !/^(\d{1,2}[\s,;|/.\-]+)*\d{1,2}$/.test(current.trim())
+        && !/^(\d{1,2}[\s,;|/.-]+)*\d{1,2}$/.test(current.trim())
         ? tryDecode('Hex', current, decoded => utf8Decoder.decode(hexToBytes(decoded))) : null,
       // Space/comma-separated 0x-prefixed hex bytes: 0x70 0x69 ... or 0x70, 0x69, ...
       /(?:0x[0-9a-fA-F]{1,2}[\s,]+){1,}0x[0-9a-fA-F]{1,2}/.test(current) ? tryDecode('0x-Hex bytes', current, v => utf8Decoder.decode(hexToBytes(v.replace(/[\s,]+/g, '').replace(/0x/gi, '')))) : null,
@@ -13361,7 +13361,7 @@ const smartDecode = async (value: string): Promise<string> => {
       /^[A-Za-z0-9!#$%&()*+,./:;<=>?@[\]^_`{|}~"\s]+$/.test(current) && /[!#$%&()*+,./:;<=>?@[\]^_`{|}~"]/.test(current) && current.length >= 8 ? tryDecode('Base91', current, decodeBase91) : null,
       /^[01\s,;|]+$/.test(current) && (current.match(/[01]{8}/g) || []).length > 0 ? tryDecode('Binary', current, binaryDecode) : null,
       /^(\\[0-7]{1,3}|0o[0-7]+|0[0-7]{1,3}|[0-7]{3}|[\s,;|])+$/i.test(current) ? tryDecode('Octal', current, octalDecode) : null,
-      /^(\d{1,2}[\s,;|/.\-]+)*\d{1,2}$/.test(current.trim()) ? tryDecode('A1Z26', current, a1z26Decode) : null,
+      /^(\d{1,2}[\s,;|/.-]+)*\d{1,2}$/.test(current.trim()) ? tryDecode('A1Z26', current, a1z26Decode) : null,
       // Morse
       /^[-. /\s]+$/.test(current) && /[.-]{2,}/.test(current) ? tryDecode('Morse', current, morseDecode) : null,
       // Arbitrary base-N (3-11): space-separated digits, all within [0,base)
@@ -13437,7 +13437,7 @@ const smartDecode = async (value: string): Promise<string> => {
       /^(?:[01]{5}[\s,]+){4,}[01]{5}/.test(current.trim()) ? tryDecode('Baudot', current, baudotDecode) : null,
       // Polybius square (digit pairs 1-5, at least 4 pairs)
       (() => {
-        const stripped = current.replace(/[\s,;|\-]/g, '');
+        const stripped = current.replace(/[\s,;|-]/g, '');
         if (/^[1-5]+$/.test(stripped) && stripped.length >= 8 && stripped.length % 2 === 0)
           return tryDecode('Polybius', current, polybiusDecode);
         return null;

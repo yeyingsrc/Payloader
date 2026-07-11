@@ -1229,93 +1229,6 @@ const renderClientArtifacts = items => {
   `;
 };
 
-const renderClientBuildForm = () => {
-  const latest = clientBuildLatest();
-  const active = clientBuildActive();
-  const counts = clientBuildCounts();
-  const isBuilding = clientBuildIsBuilding();
-  const failed = latest?.status === 'failed';
-  const hasDownload = latest?.status === 'success' && latest.fileName;
-  const environment = state.clientBuildStatus?.environment || {};
-  const runtime = latest?.runtime || environment.runtime || 'electron-offline-client';
-  const signingConfigured = Boolean(latest?.codeSigningConfigured || environment.codeSigningConfigured);
-  const downloadUrl = hasDownload
-    ? `/api/admin/client-builds/download/${encodeURIComponent(latest.fileName)}`
-    : '';
-  const logs = [
-    ...(Array.isArray(active?.logs) ? active.logs : []),
-    ...(Array.isArray(latest?.logs) ? latest.logs : []),
-  ].filter(Boolean).slice(-4);
-  const body = `
-    <div class="client-build-shell">
-      <section class="client-build-hero">
-        <div>
-          <span>Payloader Desktop Client</span>
-          <h3>生成公开版桌面客户端</h3>
-          <p>生成结果是离线桌面客户端，安装后打开独立 Electron 桌面窗口，不跳转浏览器。客户端只包含前台静态页面、公开 Payload、工具命令、导航树和公开站点设置。</p>
-        </div>
-        <div class="client-build-actions">
-          <button class="btn primary" type="button" data-action="generate-client-build" ${isBuilding ? 'disabled' : ''}>
-            ${isBuilding ? '正在生成' : '生成客户端'}
-          </button>
-          <button class="btn" type="button" data-action="refresh-client-build" ${state.clientBuildLoading ? 'disabled' : ''}>刷新状态</button>
-          ${hasDownload ? `<a class="btn success" href="${escapeHtml(downloadUrl)}">下载客户端</a>` : ''}
-        </div>
-      </section>
-
-      <section class="client-build-grid" aria-label="客户端生成状态">
-        <div class="client-build-card">
-          <span>当前状态</span>
-          <strong>${escapeHtml(active?.message || latest?.message || '尚未生成')}</strong>
-          <small>${active ? '构建任务正在后台执行，完成后会自动显示下载按钮。' : failed ? '上次生成失败，请查看日志后重新生成。' : hasDownload ? '最新客户端可以下载。' : '点击生成客户端创建第一个客户端。'}</small>
-        </div>
-        <div class="client-build-card">
-          <span>公开数据快照</span>
-          <strong>${Number(counts.payloads || 0)} Payload / ${Number(counts.tools || 0)} 工具</strong>
-          <small>${Number(counts.navigation || 0)} payload navigation groups, ${Number(counts.toolNavigation || 0)} tool navigation groups.</small>
-        </div>
-        <div class="client-build-card">
-          <span>签名状态</span>
-          <strong>${signingConfigured ? '已配置代码签名' : '未配置代码签名'}</strong>
-          <small>${signingConfigured ? '构建时会使用证书签名，有助于降低误报和系统拦截。' : '未签名客户端更容易被安全软件标记；生产分发建议配置正规代码签名证书。'}</small>
-        </div>
-      </section>
-
-      ${hasDownload ? `
-        <section class="client-build-detail">
-          <div>
-            <span>校验信息</span>
-            <code>${escapeHtml(latest.sha256 || '')}</code>
-          </div>
-          <div>
-            <span>最近文件</span>
-            <strong>${escapeHtml(latest.fileName || '')}</strong>
-            <small>${formatLargeBytes(latest.size)} · ${formatBuildDate(latest.finishedAt)} · ${escapeHtml(runtime)}</small>
-          </div>
-        </section>
-      ` : ''}
-
-      <section class="client-build-policy">
-        <h3>打包边界</h3>
-        <ul>
-          <li>客户端内置本次生成时的公开数据快照，用户安装后可直接打开桌面客户端复制前台展示内容。</li>
-          <li>客户端不包含后台页面、后台 API、SQLite 文件、管理员凭据、导入模板、Logo 上传接口。</li>
-          <li>Logo 只在站点设置使用安全上传路径时随公开前台一起打包；其它上传文件不会进入客户端。</li>
-          <li>本系统不做加壳、混淆、规避安全软件检测等处理；如果安全软件按 HackTool 标记，优先使用代码签名证书、稳定版本号、官方下载页和厂商误报申诉流程。</li>
-        </ul>
-      </section>
-
-      ${logs.length || failed ? `
-        <section class="client-build-log">
-          <h3>${failed ? '失败信息' : '构建日志'}</h3>
-          <pre>${escapeHtml(logs.join('\n\n') || latest?.message || '生成失败')}</pre>
-        </section>
-      ` : ''}
-    </div>
-  `;
-  $('editor-form').innerHTML = body;
-};
-
 const renderClientBuildFormV2 = () => {
   const latest = clientBuildLatest();
   const active = clientBuildActive();
@@ -2160,23 +2073,59 @@ const deleteSelected = async () => {
 };
 
 const resetCurrent = async target => {
-  if (state.module === 'clientBuilds' || state.module === 'account') return;
-  if (!confirmDiscard()) return;
-  const isAll = target === 'all';
-  const resetScope = isAll
-    ? '这会把站点设置、Payload、工具命令和导航树全部重置为内置默认数据。'
-    : `这会把当前模块「${moduleConfig().title}」重置为内置默认数据。`;
-  if (!confirm(`${resetScope}\n\n现有已保存数据会被覆盖，未保存修改也会丢失。此操作不可撤销。\n\n确认继续吗？`)) return;
+  if (state.module === 'clientBuilds' || state.module === 'account' || state.saving) return;
   state.saving = true;
   updateTopbar();
   try {
-    await api('/api/admin/reset-defaults', { method: 'POST', body: JSON.stringify({ target }) });
+    const impact = await api(`/api/admin/reset-impact?target=${encodeURIComponent(target)}`);
+    if (!confirmDiscard()) return;
+
+    if (!impact?.before || !impact?.seed || !impact?.delta || !Array.isArray(impact?.affected)) {
+      throw new Error('无法读取完整的重置影响预览，请稍后重试');
+    }
+
+    const resetScopeLabels = {
+      payloads: 'Payload',
+      tools: '工具命令',
+      navigation: 'Payload 导航节点',
+      toolNavigation: '工具导航节点',
+      settings: '站点设置',
+    };
+    const impactLines = impact.affected.map(scope => {
+      const before = Number(impact.before[scope] || 0);
+      const seed = Number(impact.seed[scope] || 0);
+      const delta = Number(impact.delta[scope] || 0);
+      const signedDelta = delta > 0 ? `+${delta}` : String(delta);
+      return `- ${resetScopeLabels[scope] || scope}：重置前 ${before} / 默认 ${seed} / 净变化 ${signedDelta}`;
+    });
+    const isAll = target === 'all';
+    const resetScope = isAll
+      ? '这会把站点设置、Payload、工具命令和导航树全部重置为内置默认数据。'
+      : `这会把当前模块「${moduleConfig().title}」重置为内置默认数据。`;
+    const confirmed = confirm([
+      resetScope,
+      '',
+      '重置影响预览：',
+      ...impactLines,
+      '',
+      '系统会在写入默认数据前先创建数据库备份；重置成功后会显示备份文件位置。',
+      '现有已保存数据会被覆盖，未保存修改也会丢失。',
+      '',
+      '确认继续吗？',
+    ].join('\n'));
+    if (!confirmed) return;
+
+    const result = await api('/api/admin/reset-defaults', { method: 'POST', body: JSON.stringify({ target }) });
     state.selectedId = null;
     state.draft = null;
     state.activeSectionTitle = null;
     state.logoUploadMeta = null;
     await loadAll();
-    notice(isAll ? '已将全部后台数据重置为默认数据' : `已将 ${moduleConfig().title} 重置为默认数据`);
+    const backupPath = typeof result?.backup?.path === 'string' ? result.backup.path.trim() : '';
+    const backupFileName = typeof result?.backup?.fileName === 'string' ? result.backup.fileName.trim() : '';
+    const backupLocation = backupPath || backupFileName;
+    const resetMessage = isAll ? '已将全部后台数据重置为默认数据' : `已将 ${moduleConfig().title} 重置为默认数据`;
+    notice(backupLocation ? `${resetMessage}；备份：${backupLocation}` : resetMessage);
   } finally {
     state.saving = false;
     updateTopbar();

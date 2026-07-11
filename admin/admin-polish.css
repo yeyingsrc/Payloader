@@ -1,0 +1,540 @@
+/* Admin module navigation polish */
+.nav-collapse-btn {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--muted);
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 850;
+}
+
+.nav-collapse-btn:hover,
+.nav-collapse-btn:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.nav-collapse-btn span,
+.nav-collapse-btn strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-collapse-btn strong {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.module-nav {
+  gap: 6px !important;
+}
+
+.module-btn {
+  min-width: 0;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px !important;
+  padding: 10px 11px 10px 14px !important;
+  text-align: left !important;
+  overflow: hidden;
+}
+
+.module-btn::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.module-btn::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.42;
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.module-btn.active::before {
+  background: var(--accent);
+}
+
+.module-btn span,
+.module-btn small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-btn span {
+  font-size: 13px !important;
+  line-height: 1.25 !important;
+}
+
+.module-btn small {
+  grid-column: 1;
+  font-size: 11px !important;
+  line-height: 1.28 !important;
+}
+
+body[data-nav-collapsed="true"] .admin-shell {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
+body[data-nav-collapsed="true"] .admin-sidebar {
+  padding: 14px 10px;
+  align-items: stretch;
+}
+
+body[data-nav-collapsed="true"] .brand-block {
+  justify-content: center;
+}
+
+body[data-nav-collapsed="true"] .brand-block > div:last-child,
+body[data-nav-collapsed="true"] .module-btn small,
+body[data-nav-collapsed="true"] .module-btn::after,
+body[data-nav-collapsed="true"] .stats-grid,
+body[data-nav-collapsed="true"] .nav-collapse-btn span {
+  display: none !important;
+}
+
+body[data-nav-collapsed="true"] .brand-mark {
+  width: 42px;
+  height: 42px;
+}
+
+body[data-nav-collapsed="true"] .nav-collapse-btn {
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+body[data-nav-collapsed="true"] .nav-collapse-btn strong {
+  font-size: 11px;
+}
+
+body[data-nav-collapsed="true"] .module-btn {
+  min-height: 44px;
+  padding: 9px 8px !important;
+  place-items: center;
+  text-align: center !important;
+}
+
+body[data-nav-collapsed="true"] .module-btn::before {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 5px;
+  width: 22px;
+  height: 3px;
+  margin: 0 auto;
+}
+
+body[data-nav-collapsed="true"] .module-btn span {
+  max-width: 100%;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 11px !important;
+}
+
+@media (max-width: 1180px) and (min-width: 861px) {
+  body[data-nav-collapsed="true"] .admin-shell {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  body[data-nav-collapsed="true"] .admin-shell,
+  .admin-shell {
+    grid-template-columns: 1fr !important;
+  }
+
+  .top-actions .action-group {
+    display: contents !important;
+  }
+
+  .top-actions .action-group .btn.hidden,
+  .top-actions .action-group .btn[hidden] {
+    display: none !important;
+  }
+
+  .nav-collapse-btn {
+    display: none !important;
+  }
+
+  .admin-sidebar {
+    gap: 8px !important;
+  }
+
+  .module-nav {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 7px !important;
+    overflow-x: auto !important;
+    padding: 0 2px 3px !important;
+    scrollbar-width: none;
+  }
+
+  .module-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .module-btn {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: max-content !important;
+    max-width: 156px;
+    min-height: 38px !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 0 !important;
+    padding: 8px 12px !important;
+    border-radius: 999px !important;
+    text-align: center !important;
+    white-space: nowrap !important;
+  }
+
+  .module-btn::before,
+  .module-btn::after,
+  .module-btn small {
+    display: none !important;
+  }
+
+  .module-btn span {
+    display: block !important;
+    max-width: 132px;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+  }
+
+  .top-actions .btn {
+    font-size: 12px !important;
+    text-indent: 0 !important;
+  }
+
+  .top-actions .btn::after {
+    content: none !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .module-nav {
+    gap: 6px !important;
+  }
+
+  .module-btn {
+    min-height: 36px !important;
+    max-width: 128px;
+    padding-inline: 10px !important;
+  }
+
+  .module-btn span {
+    max-width: 104px;
+    font-size: 11px !important;
+  }
+}
+
+/* Mobile account screen: keep one save entry and prevent clipped headings. */
+body[data-module="account"] .account-security-shell {
+  gap: 12px;
+}
+
+body[data-module="account"] .account-security-hero {
+  align-items: stretch;
+}
+
+body[data-module="account"] .account-security-hero h3,
+body[data-module="account"] .account-status-card strong,
+body[data-module="account"] .account-security-note strong,
+body[data-module="account"] .account-security-note span {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+@media (max-width: 860px) {
+  body[data-module="account"] .admin-shell {
+    padding-bottom: calc(62px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body[data-module="account"] .module-nav {
+    align-items: center;
+  }
+
+  body[data-module="account"] .module-btn {
+    flex: 0 0 auto !important;
+    max-width: none !important;
+  }
+
+  body[data-module="account"] .module-btn.active {
+    min-width: 86px !important;
+    padding-inline: 14px !important;
+  }
+
+  body[data-module="account"] .module-btn span {
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+  }
+
+  body[data-module="account"] .topbar {
+    min-height: 58px;
+  }
+
+  body[data-module="account"] .top-title-row {
+    gap: 8px;
+  }
+
+  body[data-module="account"] .topbar h2 {
+    flex: 1 1 auto;
+    white-space: normal;
+    line-height: 1.2;
+  }
+
+  body[data-module="account"] .mobile-save-state {
+    flex: 0 0 auto;
+  }
+
+  body[data-module="account"] .workspace,
+  body[data-module="account"] .editor-panel,
+  body[data-module="account"] .editor-body {
+    min-height: 0;
+  }
+
+  body[data-module="account"] .editor-form {
+    padding: 10px 12px calc(18px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body[data-module="account"] #mobile-back-list {
+    display: none !important;
+  }
+
+  body[data-module="account"] .editor-mobile-head {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "summary"
+      "actions";
+  }
+
+  body[data-module="account"] .account-security-hero,
+  body[data-module="account"] .account-status-card,
+  body[data-module="account"] .account-security-note,
+  body[data-module="account"] .form-section > .section-head {
+    border-radius: 8px;
+  }
+}
+
+/* ── 客户端生成模块优化 ────────────────────────────── */
+
+/* 状态卡片横排 */
+body[data-module="clientBuilds"] [role="region"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  border: none !important;
+  background: none !important;
+  padding: 0 !important;
+  margin-bottom: 20px;
+}
+body[data-module="clientBuilds"] [role="region"] > * {
+  flex: 1 1 200px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+body[data-module="clientBuilds"] [role="region"] > * > *:first-child {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 4px;
+}
+body[data-module="clientBuilds"] [role="region"] strong {
+  font-size: 14px;
+  display: block;
+}
+body[data-module="clientBuilds"] [role="region"] > * > *:last-child:not(strong) {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+/* Target cards keep the grid areas defined in admin.css; labels may wrap. */
+body[data-module="clientBuilds"] [aria-label="客户端生成目标矩阵"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 8px;
+}
+
+body[data-module="clientBuilds"] .client-target-card {
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+body[data-module="clientBuilds"] .client-target-card span,
+body[data-module="clientBuilds"] [aria-label="客户端生成目标矩阵"] strong {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+body[data-module="clientBuilds"] .client-target-card small,
+body[data-module="clientBuilds"] .client-target-card em {
+  min-width: 0;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+@media (max-width: 560px) {
+  body[data-module="clientBuilds"] [aria-label="客户端生成目标矩阵"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 下载表格紧凑 */
+body[data-module="clientBuilds"] table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+body[data-module="clientBuilds"] table tr:first-child {
+  border-bottom: 1px solid var(--border);
+}
+body[data-module="clientBuilds"] table tr:first-child > * {
+  padding: 6px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+body[data-module="clientBuilds"] table tr:not(:first-child):not(:has(code)) > * {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+body[data-module="clientBuilds"] table tr:has(code) > * {
+  padding: 2px 10px 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 底部注释区 */
+body[data-module="clientBuilds"] .editor-body > *:last-child {
+  margin-top: 8px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+body[data-module="clientBuilds"] .editor-body > *:last-child h3 {
+  font-size: 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+body[data-module="clientBuilds"] .editor-body > *:last-child li {
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 2px 0;
+}
+
+
+  body[data-module="account"] .account-security-hero {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  body[data-module="account"] .account-security-hero h3 {
+    margin-top: 2px;
+    font-size: 16px;
+  }
+
+  body[data-module="account"] .account-security-hero p {
+    margin-top: 6px;
+    line-height: 1.55;
+    font-size: 12px;
+  }
+
+  body[data-module="account"] .account-status-card,
+  body[data-module="account"] .account-security-note {
+    padding: 12px;
+  }
+
+  body[data-module="account"] .form-section > .section-head {
+    min-height: 60px;
+  }
+
+  body[data-module="account"] .section-edit-label {
+    justify-self: end;
+    width: auto;
+    min-width: 58px;
+  }
+
+  body[data-module="account"] .top-actions {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.9fr) !important;
+    min-height: 62px;
+    overflow: hidden !important;
+  }
+
+  body[data-module="account"] .top-actions .btn {
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 12px !important;
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 390px) {
+  body[data-module="account"] .top-actions {
+    gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  body[data-module="account"] .top-actions .btn {
+    padding-left: 6px;
+    padding-right: 6px;
+    font-size: 11px;
+  }
+
+  body[data-module="account"] .account-security-hero,
+  body[data-module="account"] .account-status-card,
+  body[data-module="account"] .account-security-note {
+    padding: 10px;
+  }
+}
+
+/* ── 站点设置布局优化 ─────────────────────────────── */
+body[data-module="settings"] .form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+}
+body[data-module="settings"] .form-section + .form-section {
+  margin-top: 8px;
+}
