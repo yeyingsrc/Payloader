@@ -75,6 +75,14 @@ test('mobile search input meets the minimum touch target', async () => {
   assert.doesNotMatch(header, /\.search-input\s*\{[^}]*height:\s*42px/s);
 });
 
+test('mobile encoding controls meet the minimum touch target', async () => {
+  const encodingTools = await read('src/components/EncodingTools.tsx');
+  const mobileStyles = encodingTools.slice(encodingTools.indexOf('@media (max-width: 680px)'));
+
+  assert.match(mobileStyles, /\.operation-select-field select,[\s\S]*?\.copy-btn\s*\{[^}]*min-height:\s*44px/);
+  assert.doesNotMatch(mobileStyles, /min-height:\s*(?:3\d|4[0-3])px/);
+});
+
 test('payload tutorial and WAF states are content driven', async () => {
   const detail = await read('src/components/PayloadDetail.tsx');
 

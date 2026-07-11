@@ -14543,6 +14543,18 @@ function EncodingTools() {
             padding: 10px;
           }
 
+          .operation-select-field select,
+          .codec-options select,
+          .codec-options input,
+          .category-select,
+          .mode-btn,
+          .options-toggle,
+          .detect-strip button,
+          .clear-btn,
+          .copy-btn {
+            min-height: 44px;
+          }
+
           .operation-summary {
             align-items: stretch;
             flex-direction: column;
@@ -14584,7 +14596,7 @@ function EncodingTools() {
           .clear-btn,
           .copy-btn {
             width: 100%;
-            min-height: 40px;
+            min-height: 44px;
             white-space: normal;
           }
 
