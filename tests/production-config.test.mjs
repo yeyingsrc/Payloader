@@ -96,7 +96,10 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(workflow, /PAYLOADER_CLIENT_PERF_PROFILE:\s*shared-runner/);
   assert.match(workflow, /npm run merge:client-shells/);
   assert.match(workflow, /startsWith\(github\.ref, 'refs\/tags\/v'\)/);
-  assert.match(workflow, /gh release upload/);
+  assert.match(workflow, /release_tag:/);
+  assert.match(workflow, /GH_REPO:\s*\$\{\{ github\.repository \}\}/);
+  assert.match(workflow, /RELEASE_TAG:/);
+  assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
   assert.match(builder, /createBuildEnvironment\(signingSource, \{ includeSigning: true \}\)/);
   assert.match(builder, /PAYLOADER_SHELL_WINDOWS_/);
   assert.match(builder, /PAYLOADER_SHELL_MACOS_/);
