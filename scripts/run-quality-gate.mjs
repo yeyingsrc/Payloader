@@ -5,7 +5,7 @@ const steps = [
   'typecheck',
   'lint',
   'verify:codec',
-  'curate:content',
+  'verify:curation',
   'verify:content',
   'test',
   'build',

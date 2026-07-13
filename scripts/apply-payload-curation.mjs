@@ -688,6 +688,7 @@ export const parseCurationCli = argv => {
     apply: false,
     json: false,
     requireReady: false,
+    seedOnly: false,
     runtimeFile: defaultRuntimeFile,
     seedFile: defaultSeedFile,
     reviewDir: defaultReviewDir,
@@ -707,6 +708,7 @@ export const parseCurationCli = argv => {
     if (argument === '--apply') options.apply = true;
     else if (argument === '--json') options.json = true;
     else if (argument === '--require-ready') options.requireReady = true;
+    else if (argument === '--seed-only') options.seedOnly = true;
     else if (pathArguments.has(argument)) {
       const value = argv[index + 1];
       if (!value) throw new Error(`${argument} requires a path`);
@@ -715,6 +717,9 @@ export const parseCurationCli = argv => {
     } else {
       throw new Error(`Unknown argument: ${argument}`);
     }
+  }
+  if (options.seedOnly && options.apply) {
+    throw new Error('--seed-only cannot be combined with --apply');
   }
   return options;
 };
@@ -729,16 +734,18 @@ const compactCurationResult = result => ({
 
 const runCli = async argv => {
   const options = parseCurationCli(argv);
-  if (!existsSync(options.runtimeFile)) throw new Error(`Runtime database not found: ${options.runtimeFile}`);
-  const source = loadCurationSnapshot(options.runtimeFile);
+  const sourceFile = options.seedOnly ? options.seedFile : options.runtimeFile;
+  const sourceLabel = options.seedOnly ? 'Seed' : 'Runtime';
+  if (!existsSync(sourceFile)) throw new Error(`${sourceLabel} database not found: ${sourceFile}`);
+  const source = loadCurationSnapshot(sourceFile);
   const configuration = await loadReviewConfiguration(options.reviewDir);
   const curationOptions = prepareCurationOptions(configuration, source.payloads, source.tools);
   const review = auditReviewConfiguration(source.payloads, curationOptions);
-  const dryRun = await curateDatabase(options.runtimeFile, {
+  const dryRun = await curateDatabase(sourceFile, {
     ...configuration,
     backupDir: options.backupDir,
   });
-  const formal = auditSnapshot(dryRun.snapshot, { source: `${options.runtimeFile} (curation plan)` });
+  const formal = auditSnapshot(dryRun.snapshot, { source: `${sourceFile} (curation plan)` });
   const editorial = auditPayloadEditorialQuality(dryRun.snapshot.payloads, dryRun.snapshot.tools);
   const toolEditorial = auditToolEditorialQuality(dryRun.snapshot.tools);
   const qualityGate = qualityGateFor(formal, editorial, toolEditorial);

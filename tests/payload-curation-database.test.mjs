@@ -12,11 +12,17 @@ const i18n = (zh, en = zh) => ({ zh, en });
 
 test('curation CLI can require a fully review-ready dry run', () => {
   const defaults = parseCurationCli([]);
-  const required = parseCurationCli(['--require-ready', '--json']);
+  const required = parseCurationCli(['--require-ready', '--seed-only', '--json']);
 
   assert.equal(defaults.requireReady, false);
+  assert.equal(defaults.seedOnly, false);
   assert.equal(required.requireReady, true);
+  assert.equal(required.seedOnly, true);
   assert.equal(required.json, true);
+  assert.throws(
+    () => parseCurationCli(['--seed-only', '--apply']),
+    /cannot be combined/i,
+  );
 });
 
 const payload = id => ({

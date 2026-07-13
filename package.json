@@ -13,6 +13,7 @@
     "start": "node server/admin-server.mjs",
     "build:seed": "node scripts/build-default-seed-db.mjs",
     "curate:content": "node scripts/apply-payload-curation.mjs --require-ready",
+    "verify:curation": "node scripts/apply-payload-curation.mjs --require-ready --seed-only",
     "verify:attribution": "node scripts/verify-project-attribution.mjs",
     "verify:codec": "node scripts/verify-encoding-tools.mjs",
     "verify:content": "node scripts/verify-content-quality.mjs",

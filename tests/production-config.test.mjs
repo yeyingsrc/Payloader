@@ -29,15 +29,20 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.equal(packageJson.scripts.check, 'node scripts/run-quality-gate.mjs');
   assert.equal(packageJson.scripts.build, 'node scripts/run-production-build.mjs');
   assert.equal(packageJson.scripts['verify:attribution'], 'node scripts/verify-project-attribution.mjs');
+  assert.equal(
+    packageJson.scripts['verify:curation'],
+    'node scripts/apply-payload-curation.mjs --require-ready --seed-only',
+  );
   assert.equal(packageJson.scripts['verify:client-performance'], 'node scripts/run-client-performance-check.mjs');
   assert.equal(packageJson.scripts['build:client-shells'], 'node scripts/build-client-shells.mjs');
   assert.equal(packageJson.scripts['merge:client-shells'], 'node scripts/merge-client-shell-manifests.mjs');
   for (const command of Object.values(packageJson.scripts)) {
     assert.doesNotMatch(command, /&&|\|\|/);
   }
-  for (const step of ['verify:attribution', 'typecheck', 'lint', 'verify:codec', 'verify:content', 'test', 'build']) {
+  for (const step of ['verify:attribution', 'typecheck', 'lint', 'verify:codec', 'verify:curation', 'verify:content', 'test', 'build']) {
     assert.match(qualityRunner, new RegExp(`['"]${step.replace(':', '\\:')}['"]`));
   }
+  assert.doesNotMatch(qualityRunner, /['"]curate:content['"]/);
   assert.match(qualityRunner, /spawnSync\(process\.execPath/);
   assert.match(performanceRunner, /['"]build['"]/);
   assert.match(performanceRunner, /['"]verify:client-performance:runtime['"]/);
@@ -148,6 +153,7 @@ test('CI, Docker context, and documentation describe the real runtime', async ()
   assert.match(workflow, /windows-latest/);
   assert.match(workflow, /ubuntu-latest/);
   assert.match(workflow, /macos-latest/);
+  assert.match(workflow, /client-performance:[\s\S]*PAYLOADER_CLIENT_PERF_PROFILE:\s*shared-runner/);
   assert.match(workflow, /verify:client-performance/);
   assert.match(workflow, /xvfb-run --auto-servernum/);
   assert.match(dockerignore, /node_modules/);
