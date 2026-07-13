@@ -110,7 +110,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: client-shells-release
-          path: artifacts/client-shells/*
+          path: |
+            artifacts/client-shells/Payloader-Client-Setup-*.exe
+            artifacts/client-shells/Payloader-Client-*.AppImage
+            artifacts/client-shells/Payloader-Client-*.dmg
+            artifacts/client-shells/payloader-shell-*.tar.gz
+            artifacts/client-shells/payloader-client-shells.json
+            artifacts/client-shells/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -136,6 +142,13 @@ jobs:
         run: |
           gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes
           gh release upload "$RELEASE_TAG" artifacts/client-shells/* --clobber
+          while IFS= read -r asset; do
+            case "$asset" in
+              Payloader-Client-*.sha256.txt|payloader-shell-*.tar.gz.sha256.txt|payloader-client-shells.json.sha256.txt|payloader-client-shells-windows.json|payloader-client-shells-linux.json|payloader-client-shells-macos.json)
+                gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+                ;;
+            esac
+          done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
           RELEASE_VERSION="${RELEASE_TAG#v}"
           cat > release-notes.md <<EOF
           ## Direct client downloads

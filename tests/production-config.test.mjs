@@ -105,7 +105,27 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(workflow, /Payloader-Client-\$\{RELEASE_VERSION\}-universal\.dmg/);
   assert.match(workflow, /gh release edit "\$RELEASE_TAG" --notes-file/);
   assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
-  assert.match(workflow, /path:\s*artifacts\/client-shells\/\*/);
+  for (const releaseAssetPattern of [
+    'Payloader-Client-Setup-*.exe',
+    'Payloader-Client-*.AppImage',
+    'Payloader-Client-*.dmg',
+    'payloader-shell-*.tar.gz',
+    'payloader-client-shells.json',
+    'SHA256SUMS.txt',
+  ]) {
+    assert.match(workflow, new RegExp(releaseAssetPattern.replaceAll('.', '\\.').replaceAll('*', '.*')));
+  }
+  assert.doesNotMatch(
+    workflow,
+    /name:\s*client-shells-release\s+path:\s*artifacts\/client-shells\/\*/,
+  );
+  assert.match(workflow, /gh release delete-asset "\$RELEASE_TAG" "\$asset" --yes/);
+  assert.match(workflow, /Payloader-Client-\*\.sha256\.txt/);
+  assert.match(workflow, /payloader-shell-\*\.tar\.gz\.sha256\.txt/);
+  assert.match(workflow, /payloader-client-shells\.json\.sha256\.txt/);
+  for (const platform of ['windows', 'linux', 'macos']) {
+    assert.match(workflow, new RegExp(`payloader-client-shells-${platform}\\.json`));
+  }
   assert.match(builder, /createBuildEnvironment\(signingSource, \{ includeSigning: true \}\)/);
   assert.match(builder, /PAYLOADER_SHELL_WINDOWS_/);
   assert.match(builder, /PAYLOADER_SHELL_MACOS_/);
@@ -121,6 +141,8 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(builder, /basename\(directory\) === config\.executable/);
   assert.match(merger, /validateClientShellManifest/);
   assert.match(merger, /missingTargets/);
+  assert.match(merger, /writeReleaseChecksumManifest/);
+  assert.match(merger, /SHA256SUMS\.txt/);
   assert.match(shellSmoke, /validateClientShellManifest/);
   assert.match(shellSmoke, /PAYLOADER_CLIENT_SHELL_OUTPUT_DIR/);
   assert.match(shellSmoke, /PAYLOADER_CLIENT_PERF_EXECUTABLE/);
