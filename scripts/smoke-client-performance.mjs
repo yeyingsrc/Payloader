@@ -108,6 +108,7 @@ try {
   const port = await getOpenPort();
   const args = [
     ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
+    ...(process.platform === 'linux' ? ['--disable-gpu', '--disable-dev-shm-usage'] : []),
     ...(prepared ? [prepared.appDir] : []),
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${port}`,

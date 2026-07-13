@@ -379,12 +379,12 @@ export const createClientShellTransport = async options => {
     if (platform === 'macos') {
       const appName = sourceRoot ? basename(sourceRoot) : 'Payloader.app';
       const appTarget = join(stage, appName);
-      if (sourceStats?.isDirectory()) await cp(sourceRoot, appTarget, { recursive: true });
+      if (sourceStats?.isDirectory()) await cp(sourceRoot, appTarget, { recursive: true, verbatimSymlinks: true });
       else await writeSourceFiles(appTarget, options.sourceFiles);
       await cp(deploymentPackageDir, join(stage, 'deployment.payloader'), { recursive: true });
     } else {
       const appTarget = join(stage, 'Payloader');
-      if (sourceStats?.isDirectory()) await cp(sourceRoot, appTarget, { recursive: true });
+      if (sourceStats?.isDirectory()) await cp(sourceRoot, appTarget, { recursive: true, verbatimSymlinks: true });
       else await writeSourceFiles(appTarget, options.sourceFiles);
       await cp(deploymentPackageDir, join(appTarget, 'deployment.payloader'), { recursive: true });
     }

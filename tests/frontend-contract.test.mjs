@@ -422,10 +422,15 @@ test('large catalog search builds one shared index and defers result rendering',
   assert.match(app, /useDeferredValue/);
   assert.match(app, /buildSearchIndex/);
   assert.match(app, /searchMatches/);
+  assert.match(app, /setTimeout\(\(\) => setSettledSearchQuery\(searchQuery\), 80\)/);
   assert.match(searchIndex, /buildSearchIndex/);
   assert.match(searchIndex, /matchSearchIndex/);
-  assert.match(searchIndex, /payloads:\s*readonly PayloadItem\[\]/);
-  assert.match(searchIndex, /tools:\s*readonly ToolCommand\[\]/);
+  assert.match(searchIndex, /payloadEntries:\s*readonly SearchEntry\[\]/);
+  assert.match(searchIndex, /toolEntries:\s*readonly SearchEntry\[\]/);
+  assert.match(searchIndex, /searchableText/);
+  assert.match(searchIndex, /entry\.text\.includes\(normalizedQuery\)/);
+  assert.doesNotMatch(searchIndex, /filter\(payload => payloadMatches/);
+  assert.doesNotMatch(searchIndex, /filter\(tool => toolMatches/);
   assert.doesNotMatch(sidebar, /const searchable\s*=/);
   assert.doesNotMatch(mainContent, /const searchable\s*=/);
 });

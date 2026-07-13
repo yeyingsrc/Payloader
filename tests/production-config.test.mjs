@@ -45,17 +45,19 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.match(performanceSmoke, /Number\.isFinite\(metrics\.windowReadyMs\)/);
   assert.match(performanceSmoke, /await new Promise\(resolve => setTimeout\(resolve, 500\)\)/);
   assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--no-sandbox'\] : \[\]/);
+  assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--disable-gpu', '--disable-dev-shm-usage'\] : \[\]/);
   assert.match(productionBuilder, /verifyProjectAttribution/);
   assert.match(productionBuilder, /includeDist:\s*true/);
 });
 
 test('official client shells use native runners, smoke native archives, and publish one validated release manifest', async () => {
-  const [packageSource, workflow, builder, merger, shellSmoke] = await Promise.all([
+  const [packageSource, workflow, builder, merger, shellSmoke, shellTransport] = await Promise.all([
     readProjectFile('package.json'),
     readProjectFile('.github/workflows/client-shells.yml'),
     readProjectFile('scripts/build-client-shells.mjs'),
     readProjectFile('scripts/merge-client-shell-manifests.mjs'),
     readProjectFile('scripts/smoke-client-shell.mjs'),
+    readProjectFile('server/client-shells.mjs'),
   ]);
   const packageJson = JSON.parse(packageSource);
   assert.equal(packageJson.scripts['verify:client-shell'], 'node scripts/smoke-client-shell.mjs');
@@ -95,6 +97,7 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(shellSmoke, /smoke-client-performance\.mjs/);
   assert.match(shellSmoke, /createHash\(['"]sha256['"]\)/);
   assert.match(shellSmoke, /extractTar/);
+  assert.match(shellTransport, /verbatimSymlinks:\s*true/);
 });
 
 test('container runs the Node application as a non-root user', async () => {

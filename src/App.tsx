@@ -53,7 +53,7 @@ function App() {
       setSettledSearchQuery('');
       return;
     }
-    const timer = window.setTimeout(() => setSettledSearchQuery(searchQuery), 120);
+    const timer = window.setTimeout(() => setSettledSearchQuery(searchQuery), 80);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
 

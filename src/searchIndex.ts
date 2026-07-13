@@ -3,9 +3,8 @@ import type { Language } from './i18n';
 import type { PayloadItem, ToolCommand } from './types';
 
 export interface SearchIndex {
-  payloads: readonly PayloadItem[];
-  tools: readonly ToolCommand[];
-  language: Language;
+  payloadEntries: readonly SearchEntry[];
+  toolEntries: readonly SearchEntry[];
 }
 
 export interface SearchMatches {
@@ -13,74 +12,67 @@ export interface SearchMatches {
   toolIds: ReadonlySet<string>;
 }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const matchesText = (value: string | undefined, matcher: RegExp) => Boolean(value && matcher.test(value));
+interface SearchEntry {
+  id: string;
+  text: string;
+}
 
-const payloadMatches = (payload: PayloadItem, language: Language, matcher: RegExp) => {
-  if (
-    matchesText(getText(payload.name, language), matcher)
-    || matchesText(getText(payload.description, language), matcher)
-    || matchesText(getText(payload.category, language), matcher)
-    || matchesText(getText(payload.subCategory, language), matcher)
-  ) return true;
-  for (const tag of payload.tags) if (matchesText(tag, matcher)) return true;
-  for (const item of payload.prerequisites || []) if (matchesText(getText(item, language), matcher)) return true;
-  for (const command of payload.execution) {
-    if (
-      matchesText(getText(command.title, language), matcher)
-      || matchesText(getText(command.description, language), matcher)
-      || matchesText(command.command, matcher)
-    ) return true;
-  }
-  for (const command of payload.wafBypass || []) {
-    if (
-      matchesText(getText(command.title, language), matcher)
-      || matchesText(getText(command.description, language), matcher)
-      || matchesText(command.command, matcher)
-    ) return true;
-  }
-  return false;
-};
+const searchableText = (values: Array<string | undefined>) => values
+  .filter((value): value is string => Boolean(value))
+  .join('\n')
+  .toLowerCase();
 
-const toolMatches = (tool: ToolCommand, language: Language, matcher: RegExp) => {
-  if (
-    matchesText(getText(tool.name, language), matcher)
-    || matchesText(getText(tool.description, language), matcher)
-    || matchesText(getText(tool.category, language), matcher)
-  ) return true;
-  for (const command of tool.commands) {
-    if (
-      matchesText(getText(command.name, language), matcher)
-      || matchesText(getText(command.description, language), matcher)
-      || matchesText(command.command, matcher)
-    ) return true;
-  }
-  return false;
-};
+const payloadSearchText = (payload: PayloadItem, language: Language) => searchableText([
+  getText(payload.name, language),
+  getText(payload.description, language),
+  getText(payload.category, language),
+  getText(payload.subCategory, language),
+  ...payload.tags,
+  ...(payload.prerequisites || []).map(item => getText(item, language)),
+  ...payload.execution.flatMap(command => [
+    getText(command.title, language),
+    getText(command.description, language),
+    command.command,
+  ]),
+  ...(payload.wafBypass || []).flatMap(command => [
+    getText(command.title, language),
+    getText(command.description, language),
+    command.command,
+  ]),
+]);
+
+const toolSearchText = (tool: ToolCommand, language: Language) => searchableText([
+  getText(tool.name, language),
+  getText(tool.description, language),
+  getText(tool.category, language),
+  ...tool.commands.flatMap(command => [
+    getText(command.name, language),
+    getText(command.description, language),
+    command.command,
+  ]),
+]);
+
+const matchingIds = (entries: readonly SearchEntry[], normalizedQuery: string) => new Set(entries
+  .filter(entry => entry.text.includes(normalizedQuery))
+  .map(entry => entry.id));
 
 export const buildSearchIndex = (
   payloads: PayloadItem[],
   tools: ToolCommand[],
   language: Language,
 ): SearchIndex => ({
-  payloads,
-  tools,
-  language,
+  payloadEntries: payloads.map(payload => ({ id: payload.id, text: payloadSearchText(payload, language) })),
+  toolEntries: tools.map(tool => ({ id: tool.id, text: toolSearchText(tool, language) })),
 });
 
 export const matchSearchIndex = (index: SearchIndex, query: string): SearchMatches => {
-  const normalizedQuery = query.trim();
+  const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {
     return { payloadIds: new Set(), toolIds: new Set() };
   }
 
-  const matcher = new RegExp(escapeRegExp(normalizedQuery), 'iu');
   return {
-    payloadIds: new Set(index.payloads
-      .filter(payload => payloadMatches(payload, index.language, matcher))
-      .map(payload => payload.id)),
-    toolIds: new Set(index.tools
-      .filter(tool => toolMatches(tool, index.language, matcher))
-      .map(tool => tool.id)),
+    payloadIds: matchingIds(index.payloadEntries, normalizedQuery),
+    toolIds: matchingIds(index.toolEntries, normalizedQuery),
   };
 };
