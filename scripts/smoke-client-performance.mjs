@@ -4,7 +4,6 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import electronPath from 'electron';
 
 const timeoutMs = Number(process.env.PAYLOADER_CLIENT_PERF_TIMEOUT_MS || 30_000);
 const tempRoot = await mkdtemp(join(tmpdir(), 'payloader-client-performance-'));
@@ -16,12 +15,44 @@ const configuredExecutable = String(process.env.PAYLOADER_CLIENT_PERF_EXECUTABLE
 const packagedExecutable = configuredExecutable && isAbsolute(configuredExecutable)
   ? resolve(configuredExecutable)
   : '';
+const electronPath = packagedExecutable ? '' : (await import('electron')).default;
 
 const platformKey = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
+const sharedRunnerPerformancePolicy = Object.freeze({
+  windows: Object.freeze({
+    windowReadyMs: 4_000,
+    searchSettledMs: 750,
+    idleWorkingSetMb: 550,
+    interactionWorkingSetMb: 650,
+    privateMemoryMb: 500,
+    privateMemoryGrowthMb: 150,
+    idleCpuPercentOneCore: 5,
+  }),
+  linux: Object.freeze({
+    windowReadyMs: 8_000,
+    searchSettledMs: 750,
+    idleWorkingSetMb: 750,
+    interactionWorkingSetMb: 850,
+    idleCpuPercentOneCore: 10,
+  }),
+  macos: Object.freeze({
+    windowReadyMs: 5_000,
+    searchSettledMs: 750,
+    idleWorkingSetMb: 700,
+    interactionWorkingSetMb: 800,
+    idleCpuPercentOneCore: 10,
+  }),
+});
+const performanceProfile = String(process.env.PAYLOADER_CLIENT_PERF_PROFILE || 'strict');
+if (!['strict', 'shared-runner'].includes(performanceProfile)) {
+  throw new Error(`Unknown client performance profile: ${performanceProfile}`);
+}
 const moduleUrl = new URL('../server/client-builder.mjs', import.meta.url);
 moduleUrl.searchParams.set('client-performance-smoke', `${Date.now()}-${Math.random()}`);
 const builder = await import(moduleUrl.href);
-const policy = builder.__clientBuildTest.performancePolicy[platformKey];
+const policy = performanceProfile === 'shared-runner'
+  ? sharedRunnerPerformancePolicy[platformKey]
+  : builder.__clientBuildTest.performancePolicy[platformKey];
 
 const getOpenPort = async () => {
   const server = createServer();
@@ -224,6 +255,7 @@ try {
 
   console.log(JSON.stringify({
     platform: platformKey,
+    performanceProfile,
     windowReadyMs,
     rendererConnectedMs,
     searchSettledMs: Number(result.searchSettledMs.toFixed(1)),

@@ -46,6 +46,10 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.match(performanceSmoke, /await new Promise\(resolve => setTimeout\(resolve, 500\)\)/);
   assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--no-sandbox'\] : \[\]/);
   assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--disable-gpu', '--disable-dev-shm-usage'\] : \[\]/);
+  assert.match(performanceSmoke, /sharedRunnerPerformancePolicy/);
+  assert.match(performanceSmoke, /PAYLOADER_CLIENT_PERF_PROFILE/);
+  assert.match(performanceSmoke, /packagedExecutable \? '' : \(await import\('electron'\)\)\.default/);
+  assert.doesNotMatch(performanceSmoke, /import electronPath from ['"]electron['"]/);
   assert.match(productionBuilder, /verifyProjectAttribution/);
   assert.match(productionBuilder, /includeDist:\s*true/);
 });
@@ -81,6 +85,7 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(workflow, /actions\/download-artifact@v4/);
   assert.match(workflow, /npm run verify:client-shell/);
   assert.match(workflow, /xvfb-run --auto-servernum npm run verify:client-shell/);
+  assert.match(workflow, /PAYLOADER_CLIENT_PERF_PROFILE:\s*shared-runner/);
   assert.match(workflow, /npm run merge:client-shells/);
   assert.match(workflow, /startsWith\(github\.ref, 'refs\/tags\/v'\)/);
   assert.match(workflow, /gh release upload/);

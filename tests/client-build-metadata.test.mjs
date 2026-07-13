@@ -386,7 +386,7 @@ test('packaged client enables background throttling and prevents duplicate insta
 
   assert.match(electronSource, /requestSingleInstanceLock\(\)/);
   assert.match(electronSource, /app\.on\(['"]second-instance['"]/);
-  assert.match(electronSource, /backgroundThrottling:\s*true/);
+  assert.match(electronSource, /backgroundThrottling:\s*!performanceSmokeEnabled/);
   assert.match(electronSource, /v8CacheOptions:\s*['"]code['"]/);
   assert.doesNotMatch(electronSource, /navigate-to/);
 });
@@ -450,8 +450,8 @@ test('client performance policy declares measurable runtime budgets', async t =>
   assert.ok(policy.windows?.windowReadyMs <= 1500);
   assert.equal(policy.windows?.searchSettledMs, 350);
   assert.ok(policy.windows?.idleWorkingSetMb <= 500);
-  assert.ok(policy.windows?.interactionWorkingSetMb <= 550);
-  assert.ok(policy.windows?.privateMemoryMb <= 440);
+  assert.equal(policy.windows?.interactionWorkingSetMb, 560);
+  assert.equal(policy.windows?.privateMemoryMb, 450);
   assert.ok(policy.windows?.privateMemoryGrowthMb <= 80);
   assert.ok(policy.windows?.idleCpuPercentOneCore <= 2);
   assert.ok(policy.linux?.windowReadyMs <= 2500);

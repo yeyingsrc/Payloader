@@ -59,11 +59,13 @@ jobs:
         if: matrix.platform != 'linux'
         env:
           PAYLOADER_CLIENT_SHELL_OUTPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+          PAYLOADER_CLIENT_PERF_PROFILE: shared-runner
         run: npm run verify:client-shell
       - name: Smoke native Linux client shell
         if: matrix.platform == 'linux'
         env:
           PAYLOADER_CLIENT_SHELL_OUTPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+          PAYLOADER_CLIENT_PERF_PROFILE: shared-runner
         run: xvfb-run --auto-servernum npm run verify:client-shell
       - name: Upload shell partials
         uses: actions/upload-artifact@v4

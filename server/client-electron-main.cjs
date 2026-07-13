@@ -518,7 +518,7 @@ const createWindow = async () => {
       webviewTag: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      backgroundThrottling: true,
+      backgroundThrottling: !performanceSmokeEnabled,
     },
   });
 
