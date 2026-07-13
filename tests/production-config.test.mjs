@@ -5,10 +5,11 @@ import test from 'node:test';
 const readProjectFile = relativePath => readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
 test('package exposes one cross-platform production quality gate on supported Node', async () => {
-  const [packageSource, qualityRunner, performanceRunner, productionBuilder] = await Promise.all([
+  const [packageSource, qualityRunner, performanceRunner, performanceSmoke, productionBuilder] = await Promise.all([
     readProjectFile('package.json'),
     readProjectFile('scripts/run-quality-gate.mjs'),
     readProjectFile('scripts/run-client-performance-check.mjs'),
+    readProjectFile('scripts/smoke-client-performance.mjs'),
     readProjectFile('scripts/run-production-build.mjs'),
   ]);
   const packageJson = JSON.parse(packageSource);
@@ -40,6 +41,9 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.match(qualityRunner, /spawnSync\(process\.execPath/);
   assert.match(performanceRunner, /['"]build['"]/);
   assert.match(performanceRunner, /['"]verify:client-performance:runtime['"]/);
+  assert.match(performanceSmoke, /waitForReadyMetrics/);
+  assert.match(performanceSmoke, /Number\.isFinite\(metrics\.windowReadyMs\)/);
+  assert.match(performanceSmoke, /await new Promise\(resolve => setTimeout\(resolve, 500\)\)/);
   assert.match(productionBuilder, /verifyProjectAttribution/);
   assert.match(productionBuilder, /includeDist:\s*true/);
 });

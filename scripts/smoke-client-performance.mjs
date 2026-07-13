@@ -151,7 +151,20 @@ try {
       const buildData = await buildResponse.json();
       const input = document.querySelector('.search-input');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      const initialMetrics = await (await fetch('/api/client-performance')).json();
+      const readMetrics = async () => (await fetch('/api/client-performance')).json();
+      const waitForReadyMetrics = async (timeout = 5000) => {
+        const started = performance.now();
+        let metrics = await readMetrics();
+        while (!Number.isFinite(metrics.windowReadyMs)) {
+          if (performance.now() - started > timeout) throw new Error('Timed out waiting for ready-to-show metrics');
+          await new Promise(resolve => setTimeout(resolve, 50));
+          metrics = await readMetrics();
+        }
+        return metrics;
+      };
+      await waitForReadyMetrics();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const initialMetrics = await readMetrics();
       const searchStarted = performance.now();
       setter.call(input, 'SQL');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -163,11 +176,11 @@ try {
         await new Promise(resolve => setTimeout(resolve, 180));
       }
       await waitFor(() => document.querySelectorAll('.result-item').length > 0);
-      const peakMetrics = await (await fetch('/api/client-performance')).json();
+      const peakMetrics = await readMetrics();
       await new Promise(resolve => setTimeout(resolve, 5000));
       const metricSamples = [];
       for (let index = 0; index < 5; index += 1) {
-        metricSamples.push(await (await fetch('/api/client-performance')).json());
+        metricSamples.push(await readMetrics());
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       metricSamples.sort((left, right) => left.workingSetMb - right.workingSetMb);
