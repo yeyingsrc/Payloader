@@ -63,13 +63,14 @@ test('package exposes one cross-platform production quality gate on supported No
 });
 
 test('official client shells use native runners, smoke native archives, and publish one validated release manifest', async () => {
-  const [packageSource, workflow, builder, merger, shellSmoke, shellTransport] = await Promise.all([
+  const [packageSource, workflow, builder, merger, shellSmoke, shellTransport, clientBuilder] = await Promise.all([
     readProjectFile('package.json'),
     readProjectFile('.github/workflows/client-shells.yml'),
     readProjectFile('scripts/build-client-shells.mjs'),
     readProjectFile('scripts/merge-client-shell-manifests.mjs'),
     readProjectFile('scripts/smoke-client-shell.mjs'),
     readProjectFile('server/client-shells.mjs'),
+    readProjectFile('server/client-builder.mjs'),
   ]);
   const packageJson = JSON.parse(packageSource);
   assert.equal(packageJson.scripts['verify:client-shell'], 'node scripts/smoke-client-shell.mjs');
@@ -99,10 +100,23 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(workflow, /release_tag:/);
   assert.match(workflow, /GH_REPO:\s*\$\{\{ github\.repository \}\}/);
   assert.match(workflow, /RELEASE_TAG:/);
+  assert.match(workflow, /Direct client downloads/);
+  assert.match(workflow, /Payloader-Client-Setup-\$\{RELEASE_VERSION\}-x64\.exe/);
+  assert.match(workflow, /Payloader-Client-\$\{RELEASE_VERSION\}-universal\.dmg/);
+  assert.match(workflow, /gh release edit "\$RELEASE_TAG" --notes-file/);
   assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
+  assert.match(workflow, /path:\s*artifacts\/client-shells\/\*/);
   assert.match(builder, /createBuildEnvironment\(signingSource, \{ includeSigning: true \}\)/);
   assert.match(builder, /PAYLOADER_SHELL_WINDOWS_/);
   assert.match(builder, /PAYLOADER_SHELL_MACOS_/);
+  assert.doesNotMatch(builder, /['"]--dir['"]/);
+  assert.match(builder, /config\.builderTarget/);
+  assert.match(builder, /nativePackageName/);
+  assert.match(builder, /findNativePackage/);
+  assert.match(builder, /copyFile/);
+  assert.match(builder, /\.sha256\.txt/);
+  assert.match(clientBuilder, /version:\s*packageInfo\.version/);
+  assert.doesNotMatch(clientBuilder, /version:\s*['"]1\.0\.0['"]/);
   assert.match(builder, /createClientShellTransport/);
   assert.match(builder, /basename\(directory\) === config\.executable/);
   assert.match(merger, /validateClientShellManifest/);

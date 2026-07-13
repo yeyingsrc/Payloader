@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, extname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   CLIENT_SHELL_FORMAT,
@@ -19,16 +20,39 @@ const electronBuilderCli = join(rootDir, 'node_modules', 'electron-builder', 'cl
 const outputDirectory = resolve(process.env.PAYLOADER_CLIENT_SHELL_OUTPUT_DIR || join(rootDir, 'artifacts', 'client-shells'));
 const platformName = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
 const targetConfig = Object.freeze({
-  'win-x64-nsis': { builderPlatform: 'win', builderArch: 'x64', executable: 'Payloader.exe' },
-  'win-arm64-nsis': { builderPlatform: 'win', builderArch: 'arm64', executable: 'Payloader.exe' },
-  'win-ia32-nsis': { builderPlatform: 'win', builderArch: 'ia32', executable: 'Payloader.exe' },
-  'linux-x64-appimage': { builderPlatform: 'linux', builderArch: 'x64', executable: 'payloader' },
-  'linux-arm64-appimage': { builderPlatform: 'linux', builderArch: 'arm64', executable: 'payloader' },
-  'linux-armv7l-appimage': { builderPlatform: 'linux', builderArch: 'armv7l', executable: 'payloader' },
-  'mac-x64-dmg': { builderPlatform: 'mac', builderArch: 'x64', executable: 'Payloader.app' },
-  'mac-arm64-dmg': { builderPlatform: 'mac', builderArch: 'arm64', executable: 'Payloader.app' },
-  'mac-universal-dmg': { builderPlatform: 'mac', builderArch: 'universal', executable: 'Payloader.app' },
+  'win-x64-nsis': { builderPlatform: 'win', builderTarget: 'nsis', builderArch: 'x64', executable: 'Payloader.exe', nativeExtension: '.exe' },
+  'win-arm64-nsis': { builderPlatform: 'win', builderTarget: 'nsis', builderArch: 'arm64', executable: 'Payloader.exe', nativeExtension: '.exe' },
+  'win-ia32-nsis': { builderPlatform: 'win', builderTarget: 'nsis', builderArch: 'ia32', executable: 'Payloader.exe', nativeExtension: '.exe' },
+  'linux-x64-appimage': { builderPlatform: 'linux', builderTarget: 'AppImage', builderArch: 'x64', executable: 'payloader', nativeExtension: '.AppImage' },
+  'linux-arm64-appimage': { builderPlatform: 'linux', builderTarget: 'AppImage', builderArch: 'arm64', executable: 'payloader', nativeExtension: '.AppImage' },
+  'linux-armv7l-appimage': { builderPlatform: 'linux', builderTarget: 'AppImage', builderArch: 'armv7l', executable: 'payloader', nativeExtension: '.AppImage' },
+  'mac-x64-dmg': { builderPlatform: 'mac', builderTarget: 'dmg', builderArch: 'x64', executable: 'Payloader.app', nativeExtension: '.dmg' },
+  'mac-arm64-dmg': { builderPlatform: 'mac', builderTarget: 'dmg', builderArch: 'arm64', executable: 'Payloader.app', nativeExtension: '.dmg' },
+  'mac-universal-dmg': { builderPlatform: 'mac', builderTarget: 'dmg', builderArch: 'universal', executable: 'Payloader.app', nativeExtension: '.dmg' },
 });
+
+const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+export const nativePackageName = (targetId, version) => {
+  const config = targetConfig[targetId];
+  if (!config) throw new Error(`Unknown client shell target: ${targetId}`);
+  if (!versionPattern.test(String(version || ''))) throw new Error(`Invalid client version: ${version}`);
+  const prefix = config.builderPlatform === 'win' ? 'Payloader-Client-Setup' : 'Payloader-Client';
+  return `${prefix}-${version}-${config.builderArch}${config.nativeExtension}`;
+};
+
+export const findNativePackage = async (outputDir, targetId) => {
+  const config = targetConfig[targetId];
+  if (!config) throw new Error(`Unknown client shell target: ${targetId}`);
+  const entries = await readdir(outputDir, { withFileTypes: true });
+  const matches = entries
+    .filter(entry => entry.isFile() && extname(entry.name).toLowerCase() === config.nativeExtension.toLowerCase())
+    .map(entry => join(outputDir, entry.name));
+  if (matches.length !== 1) {
+    throw new Error(`Expected one root-level ${config.builderTarget} package, found ${matches.length}.`);
+  }
+  return matches[0];
+};
 
 const requestedTargets = String(process.env.PAYLOADER_CLIENT_SHELL_TARGETS || '')
   .split(',')
@@ -82,6 +106,14 @@ const archiveName = targetId => `payloader-shell-${targetId
   .replace(/^win-/, 'windows-')
   .replace(/-nsis$|-appimage$|-dmg$/g, '')}.tar.gz`;
 
+const hashFile = filePath => new Promise((resolveHash, rejectHash) => {
+  const hash = createHash('sha256');
+  const input = createReadStream(filePath);
+  input.on('data', chunk => hash.update(chunk));
+  input.on('error', rejectHash);
+  input.on('end', () => resolveHash(hash.digest('hex')));
+});
+
 const shellBuildEnvironment = () => {
   const environment = { ...process.env };
   const prefix = platformName === 'windows' ? 'PAYLOADER_SHELL_WINDOWS_' : 'PAYLOADER_SHELL_MACOS_';
@@ -124,8 +156,11 @@ const main = async () => {
       const publicData = await builder.__clientBuildTest.buildPublicDataSnapshot();
       const prepared = await builder.__clientBuildTest.prepareElectronApp(join(workRoot, 'prepared'), publicData);
       const signingSource = shellBuildEnvironment();
-      const buildEnvironment = builder.__clientBuildTest.createBuildEnvironment(signingSource, { includeSigning: true });
       const hasCodeSigningIdentity = Boolean(signingSource.PAYLOADER_CSC_LINK || signingSource.CSC_NAME);
+      const buildEnvironment = {
+        ...builder.__clientBuildTest.createBuildEnvironment(signingSource, { includeSigning: true }),
+        CSC_IDENTITY_AUTO_DISCOVERY: hasCodeSigningIdentity ? 'true' : 'false',
+      };
       const targets = {};
 
       for (const targetId of selectedTargets) {
@@ -134,12 +169,26 @@ const main = async () => {
         await run(process.execPath, [
           electronBuilderCli,
           `--${config.builderPlatform}`,
-          '--dir',
+          config.builderTarget,
           `--${config.builderArch}`,
           '--publish',
           'never',
         ], { cwd: prepared.appDir, env: buildEnvironment });
         const shellRoot = await findShellRoot(prepared.buildOutputDir, config);
+        const nativeSource = await findNativePackage(prepared.buildOutputDir, targetId);
+        const nativeName = nativePackageName(targetId, packageJson.version);
+        const nativeDestination = join(outputDirectory, nativeName);
+        await copyFile(nativeSource, nativeDestination);
+        const nativeStats = await stat(nativeDestination);
+        if (!nativeStats.isFile() || nativeStats.size <= 0) {
+          throw new Error(`Native client package is empty: ${nativeName}`);
+        }
+        const nativeSha256 = await hashFile(nativeDestination);
+        await writeFile(
+          join(outputDirectory, `${nativeName}.sha256.txt`),
+          `${nativeSha256}  ${nativeName}\n`,
+          'utf8',
+        );
         const archive = archiveName(targetId);
         const transport = await createClientShellTransport({
           shellRoot,
@@ -180,4 +229,5 @@ const main = async () => {
   }
 };
 
-await main();
+const isMain = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+if (isMain) await main();

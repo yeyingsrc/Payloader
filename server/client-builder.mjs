@@ -1342,10 +1342,14 @@ const prepareElectronApp = async (workDir, publicData) => {
   await copyFile(projectAttributionSource, join(appDir, 'project-attribution.cjs'));
 
   const electronVersion = await configuredElectronVersion();
+  const packageInfo = await readJsonFile(projectPackageJson, {});
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(packageInfo.version || ''))) {
+    throw new Error('Project package version is invalid.');
+  }
   const signing = codeSigningSettings();
   const appPackage = {
     name: 'payloader-client',
-    version: '1.0.0',
+    version: packageInfo.version,
     productName,
     description: 'Payloader offline desktop client',
     main: 'main.cjs',
