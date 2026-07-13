@@ -53,6 +53,9 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--disable-gpu', '--disable-dev-shm-usage'\] : \[\]/);
   assert.match(performanceSmoke, /sharedRunnerPerformancePolicy/);
   assert.match(performanceSmoke, /PAYLOADER_CLIENT_PERF_PROFILE/);
+  assert.match(performanceSmoke, /const rendererStateTimeoutMs = performanceProfile === 'shared-runner'/);
+  assert.match(performanceSmoke, /smokeResult\.exceptionDetails/);
+  assert.match(performanceSmoke, /Renderer performance smoke failed/);
   assert.match(performanceSmoke, /packagedExecutable \? '' : \(await import\('electron'\)\)\.default/);
   assert.doesNotMatch(performanceSmoke, /import electronPath from ['"]electron['"]/);
   assert.match(productionBuilder, /verifyProjectAttribution/);

@@ -47,6 +47,7 @@ const performanceProfile = String(process.env.PAYLOADER_CLIENT_PERF_PROFILE || '
 if (!['strict', 'shared-runner'].includes(performanceProfile)) {
   throw new Error(`Unknown client performance profile: ${performanceProfile}`);
 }
+const rendererStateTimeoutMs = performanceProfile === 'shared-runner' ? 20_000 : 10_000;
 const moduleUrl = new URL('../server/client-builder.mjs', import.meta.url);
 moduleUrl.searchParams.set('client-performance-smoke', `${Date.now()}-${Math.random()}`);
 const builder = await import(moduleUrl.href);
@@ -172,7 +173,7 @@ try {
   await cdp.send('Runtime.enable');
   const smokeResult = await cdp.send('Runtime.evaluate', {
     expression: `(async () => {
-      const waitFor = async (predicate, timeout = 10000) => {
+      const waitFor = async (predicate, timeout = ${rendererStateTimeoutMs}) => {
         const started = performance.now();
         while (!predicate()) {
           if (performance.now() - started > timeout) throw new Error('Timed out waiting for renderer state');
@@ -238,7 +239,19 @@ try {
     awaitPromise: true,
     returnByValue: true,
   });
-  const result = smokeResult.result.value;
+  if (smokeResult.exceptionDetails) {
+    const rendererError = smokeResult.exceptionDetails.exception?.description
+      || smokeResult.exceptionDetails.text
+      || 'Unknown renderer exception';
+    const stderrTail = stderr.join('').trim().slice(-2_000);
+    throw new Error(
+      `Renderer performance smoke failed: ${rendererError}${stderrTail ? `\nClient stderr:\n${stderrTail}` : ''}`,
+    );
+  }
+  const result = smokeResult.result?.value;
+  if (!result || typeof result !== 'object') {
+    throw new Error('Renderer performance smoke failed: CDP returned no serializable result.');
+  }
   const windowReadyMs = result.initialMetrics.windowReadyMs;
   const privateMemoryGrowthMb = result.metrics.privateMemoryMb === null
     ? null
