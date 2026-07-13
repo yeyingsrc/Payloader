@@ -127,6 +127,10 @@ test('container runs the Node application as a non-root user', async () => {
   assert.match(dockerfile, /ELECTRON_SKIP_BINARY_DOWNLOAD=1/);
   assert.match(dockerfile, /ARG PAYLOADER_COMMIT_SHA/);
   assert.match(dockerfile, /PAYLOADER_COMMIT_SHA=\$PAYLOADER_COMMIT_SHA/);
+  assert.match(
+    dockerfile,
+    /COPY scripts\/run-production-build\.mjs scripts\/verify-project-attribution\.mjs \.\/scripts\//,
+  );
   assert.doesNotMatch(dockerfile, /COPY --from=builder --chown=node:node/);
   assert.doesNotMatch(dockerfile, /nginx/);
   assert.doesNotMatch(dockerfile, /\bwine\b/i);
@@ -160,6 +164,7 @@ test('CI, Docker context, and documentation describe the real runtime', async ()
   assert.match(dockerignore, /data/);
   assert.match(dockerignore, /artifacts/);
   assert.match(dockerignore, /output/);
+  assert.match(dockerignore, /!scripts\/verify-project-attribution\.mjs/);
   assert.match(dockerignore, /\.playwright-cli/);
   assert.match(dockerignore, /\*\.bak-\*/);
   assert.match(smokeScript, /\/api\/admin\/reset-impact/);

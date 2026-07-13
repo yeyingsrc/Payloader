@@ -10,7 +10,7 @@ COPY src ./src
 COPY public ./public
 COPY admin ./admin
 COPY server ./server
-COPY scripts/run-production-build.mjs ./scripts/run-production-build.mjs
+COPY scripts/run-production-build.mjs scripts/verify-project-attribution.mjs ./scripts/
 RUN npm run build
 RUN npm prune --omit=dev
 
