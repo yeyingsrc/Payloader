@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppContext } from '../appContext';
 import { t, getText } from '../i18n';
 import { openProtectedExternalLink } from '../protectedLinks';
-import type { NavItem } from '../types';
+import type { I18nText, NavItem } from '../types';
 
 interface TreeNodeProps {
   item: NavItem;
   level: number;
-  matchedIds: Set<string>;
+  matchedIds: ReadonlySet<string>;
   forceExpand: boolean;
   isFirst?: boolean;
   onNavigate?: () => void;
@@ -147,7 +147,7 @@ function TreeNode({ item, level, matchedIds, forceExpand, isFirst = false, onNav
   );
 }
 
-function hasDescendantMatch(item: NavItem, matchedIds: Set<string>): boolean {
+function hasDescendantMatch(item: NavItem, matchedIds: ReadonlySet<string>): boolean {
   if (!item.children) return false;
   for (const child of item.children) {
     if (matchedIds.has(child.payloadId || child.toolId || '')) return true;
@@ -156,7 +156,7 @@ function hasDescendantMatch(item: NavItem, matchedIds: Set<string>): boolean {
   return false;
 }
 
-function isTreeItemVisible(item: NavItem, matchedIds: Set<string>, isSearching: boolean): boolean {
+function isTreeItemVisible(item: NavItem, matchedIds: ReadonlySet<string>, isSearching: boolean): boolean {
   if (!isSearching) return true;
   const hasChildren = Boolean(item.children?.length);
   return hasChildren
@@ -164,7 +164,12 @@ function isTreeItemVisible(item: NavItem, matchedIds: Set<string>, isSearching: 
     : matchedIds.has(item.payloadId || item.toolId || '');
 }
 
-function CustomSection({ items, matchedIds, onNavigate, language, isFirst = false }: { items: NavItem[]; matchedIds: Set<string>; onNavigate?: () => void; language: string; isFirst?: boolean }) {
+function isCustomCategory(value: I18nText): boolean {
+  if (typeof value === 'string') return value === '自定义' || value === 'Custom';
+  return value.zh === '自定义' || value.en === 'Custom';
+}
+
+function CustomSection({ items, matchedIds, onNavigate, language, isFirst = false }: { items: NavItem[]; matchedIds: ReadonlySet<string>; onNavigate?: () => void; language: string; isFirst?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="tree-node" role="none">
@@ -202,7 +207,8 @@ interface SidebarProps {
 function Sidebar({ collapsed, onClose, onNavigate }: SidebarProps) {
   const {
     activeTab,
-    searchQuery,
+    deferredSearchQuery,
+    searchMatches,
     language,
     allPayloads,
     allToolCommands,
@@ -211,53 +217,35 @@ function Sidebar({ collapsed, onClose, onNavigate }: SidebarProps) {
   } = useAppContext();
 
   const customNavItems: NavItem[] = useMemo(() => {
-    if (activeTab !== 'payloads' && activeTab !== 'tools') return [];
-    return allPayloads
-      .filter(p => (typeof p.category === 'string' ? p.category : p.category.zh) === '自定义')
-      .map(p => ({ id: `custom-nav-${p.id}`, name: p.name, payloadId: p.id }));
-  }, [activeTab, allPayloads]);
+    if (activeTab === 'payloads') {
+      return allPayloads
+        .filter(item => isCustomCategory(item.category))
+        .map(item => ({
+          id: `custom-payload-nav-${item.id}`,
+          name: item.name,
+          payloadId: item.id,
+        }));
+    }
+    if (activeTab === 'tools') {
+      return allToolCommands
+        .filter(item => isCustomCategory(item.category))
+        .map(item => ({
+          id: `custom-tool-nav-${item.id}`,
+          name: item.name,
+          toolId: item.id,
+        }));
+    }
+    return [];
+  }, [activeTab, allPayloads, allToolCommands]);
 
   const data = useMemo(
     () => activeTab === 'payloads' ? allPayloadNavigation : activeTab === 'tools' ? allToolNavigation : [],
     [activeTab, allPayloadNavigation, allToolNavigation],
   );
 
-  // Compute matched IDs based on search query
-  const { matchedIds, matchCount } = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return { matchedIds: new Set<string>(), matchCount: 0 };
-
-    const ids = new Set<string>();
-
-    if (activeTab === 'payloads') {
-      for (const p of allPayloads) {
-        const searchable = [
-          getText(p.name, language), getText(p.description, language), getText(p.category, language), getText(p.subCategory, language),
-          ...p.tags,
-          ...(p.prerequisites || []).map(pr => getText(pr, language)),
-          ...p.execution.map(command => `${getText(command.title, language)} ${getText(command.description, language)} ${command.command}`),
-          ...(p.wafBypass || []).map(command => `${getText(command.title, language)} ${getText(command.description, language)} ${command.command}`),
-        ].join(' ').toLowerCase();
-        if (searchable.includes(query)) {
-          ids.add(p.id);
-        }
-      }
-    } else if (activeTab === 'tools') {
-      for (const tc of allToolCommands) {
-        const searchable = [
-          getText(tc.name, language), getText(tc.description, language), getText(tc.category, language),
-          ...tc.commands.map(c => getText(c.name, language) + ' ' + getText(c.description, language)),
-        ].join(' ').toLowerCase();
-        if (searchable.includes(query)) {
-          ids.add(tc.id);
-        }
-      }
-    }
-
-    return { matchedIds: ids, matchCount: ids.size };
-  }, [searchQuery, activeTab, language, allPayloads, allToolCommands]);
-
-  const isSearching = searchQuery.trim().length > 0;
+  const matchedIds = activeTab === 'payloads' ? searchMatches.payloadIds : searchMatches.toolIds;
+  const matchCount = matchedIds.size;
+  const isSearching = deferredSearchQuery.trim().length > 0;
   const firstVisibleRootId = useMemo(
     () => data.find(item => isTreeItemVisible(item, matchedIds, isSearching))?.id ?? null,
     [data, isSearching, matchedIds],

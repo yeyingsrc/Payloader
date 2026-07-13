@@ -22,7 +22,8 @@ function MainContent({ clientBuildInfo }: MainContentProps) {
     language,
     dataLoading,
     dataError,
-    searchQuery,
+    deferredSearchQuery,
+    searchMatches,
     setSearchQuery,
     allPayloads,
     allToolCommands,
@@ -32,56 +33,26 @@ function MainContent({ clientBuildInfo }: MainContentProps) {
     setActiveView,
   } = useAppContext();
 
-  const query = searchQuery.trim().toLowerCase();
+  const query = deferredSearchQuery.trim();
 
   const payloadResults = useMemo(() => {
     if (!query) return [];
     return allPayloads
-      .map(payload => {
-        const commands = [
-          ...payload.execution,
-          ...(payload.wafBypass || []),
-        ];
-        const searchable = [
-          getText(payload.name, language),
-          getText(payload.description, language),
-          getText(payload.category, language),
-          getText(payload.subCategory, language),
-          payload.tags.join(' '),
-          ...commands.map(command => [
-            getText(command.title, language),
-            getText(command.description, language),
-            command.command,
-          ].join(' ')),
-        ].join(' ').toLowerCase();
-
-        return searchable.includes(query)
-          ? { payload, commandCount: payload.execution.length, bypassCount: payload.wafBypass?.length || 0 }
-          : null;
-      })
-      .filter(Boolean)
+      .filter(payload => searchMatches.payloadIds.has(payload.id))
+      .map(payload => ({
+        payload,
+        commandCount: payload.execution.length,
+        bypassCount: payload.wafBypass?.length || 0,
+      }))
       .slice(0, 80);
-  }, [allPayloads, language, query]);
+  }, [allPayloads, query, searchMatches.payloadIds]);
 
   const toolResults = useMemo(() => {
     if (!query) return [];
     return allToolCommands
-      .filter(tool => {
-        const searchable = [
-          getText(tool.name, language),
-          getText(tool.description, language),
-          getText(tool.category, language),
-          ...tool.commands.map(command => [
-            getText(command.name, language),
-            getText(command.description, language),
-            command.command,
-          ].join(' ')),
-        ].join(' ').toLowerCase();
-
-        return searchable.includes(query);
-      })
+      .filter(tool => searchMatches.toolIds.has(tool.id))
       .slice(0, 80);
-  }, [allToolCommands, language, query]);
+  }, [allToolCommands, query, searchMatches.toolIds]);
 
   const homeActions = useMemo(() => {
     const findDestination = (item: (typeof allPayloadNavigation)[number]): { payloadId?: string; toolId?: string } | null => {
@@ -129,8 +100,8 @@ function MainContent({ clientBuildInfo }: MainContentProps) {
     const isPayloadSearch = activeTab === 'payloads';
     const resultCount = isPayloadSearch ? payloadResults.length : toolResults.length;
     const title = language === 'zh'
-      ? `搜索结果：${searchQuery.trim()}`
-      : `Search results: ${searchQuery.trim()}`;
+      ? `搜索结果：${deferredSearchQuery.trim()}`
+      : `Search results: ${deferredSearchQuery.trim()}`;
     const hint = language === 'zh'
       ? '点开结果后即可查看可复制列表。'
       : 'Open a result to view the copyable list.';

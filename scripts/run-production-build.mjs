@@ -1,11 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { verifyProjectAttribution } from './verify-project-attribution.mjs';
 
 const localModule = relativePath => fileURLToPath(new URL(`../node_modules/${relativePath}`, import.meta.url));
 const commands = [
   [localModule('typescript/bin/tsc'), ['-b']],
   [localModule('vite/bin/vite.js'), ['build']],
 ];
+
+await verifyProjectAttribution();
 
 for (const [entrypoint, args] of commands) {
   const result = spawnSync(process.execPath, [entrypoint, ...args], {
@@ -22,3 +25,5 @@ for (const [entrypoint, args] of commands) {
     process.exit(result.status ?? 1);
   }
 }
+
+await verifyProjectAttribution({ includeDist: true });

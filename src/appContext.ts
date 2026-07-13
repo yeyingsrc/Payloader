@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { Language } from './i18n';
 import type { GlobalVariable, NavItem, PayloadItem, SiteSettings, ToolCommand } from './types';
+import type { SearchMatches } from './searchIndex';
 
 export type ThemeMode = 'dark' | 'light';
 export type ActiveTab = 'payloads' | 'tools';
@@ -31,6 +32,8 @@ export interface AppContextType {
   setTheme: React.Dispatch<React.SetStateAction<ThemeMode>>;
   searchQuery: string;
   setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
+  deferredSearchQuery: string;
+  searchMatches: SearchMatches;
   language: Language;
   setLanguage: React.Dispatch<React.SetStateAction<Language>>;
 }

@@ -394,7 +394,7 @@ const operations: Operation[] = [
     id: 'gray-code',
     category: 'binary',
     name: { zh: 'Gray Code 格雷', en: 'Gray Code' },
-    summary: { zh: '在二进制或十进制整数与 Gray Code 之间互转，适合硬件与编码谜题。', en: 'Converts binary or decimal integers to and from Gray code for hardware, image-strip, and encoding puzzles.' },
+    summary: { zh: '在二进制或十进制整数与 Gray Code 之间互转；裸 0/1 串按二进制，支持 0b / 0d 前缀消除歧义。', en: 'Converts binary or decimal integers to and from Gray code; bare 0/1 strings are binary, with 0b/0d prefixes for unambiguous input.' },
     params: ['separator'],
   },
   {
@@ -2001,7 +2001,29 @@ const htmlEncode = (value: string, variant: string) => {
     .replace(/'/g, '&#x27;');
 };
 
+const htmlNamedEntities: Record<string, string> = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: '\u00a0',
+  quot: '"',
+};
+
+const htmlDecodeFallback = (value: string) => value.replace(/&(?:(#x[0-9a-f]+)|(#\d+)|([a-z][a-z0-9]+));/gi, (match, hex, decimal, named) => {
+  if (hex) {
+    const codePoint = Number.parseInt(hex.slice(2), 16);
+    return Number.isSafeInteger(codePoint) && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+  }
+  if (decimal) {
+    const codePoint = Number.parseInt(decimal.slice(1), 10);
+    return Number.isSafeInteger(codePoint) && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+  }
+  return htmlNamedEntities[String(named).toLowerCase()] || match;
+});
+
 const htmlDecode = (value: string) => {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return htmlDecodeFallback(value);
   const textarea = document.createElement('textarea');
   textarea.innerHTML = value;
   return textarea.value;
@@ -2334,12 +2356,19 @@ const parseBinaryOrDecimalTokens = (value: string) => value
   .split(/[\s,;|]+/)
   .filter(Boolean)
   .map(token => {
+    const binary = /^0b([01]+)$/i.exec(token);
+    if (binary) return { raw: token, value: BigInt(`0b${binary[1]}`), width: binary[1].length, binary: true };
+    const decimal = /^0d(\d+)$/i.exec(token);
+    if (decimal) {
+      const parsed = BigInt(decimal[1]);
+      return { raw: token, value: parsed, width: Math.max(1, parsed.toString(2).length), binary: false };
+    }
     if (/^[01]+$/.test(token)) return { raw: token, value: BigInt(`0b${token}`), width: token.length, binary: true };
     if (/^\d+$/.test(token)) {
       const parsed = BigInt(token);
       return { raw: token, value: parsed, width: Math.max(1, parsed.toString(2).length), binary: false };
     }
-    throw new Error(`无法解析整数: ${token}`);
+    throw new Error(`无法解析整数: ${token}；二进制可用 0b 前缀，十进制可用 0d 前缀`);
   });
 
 const bigIntToBinary = (value: bigint, width: number) => value.toString(2).padStart(width, '0');
@@ -2356,17 +2385,7 @@ const grayEncode = (value: string, separator: string) => {
 };
 
 const grayDecode = (value: string, separator: string) => {
-  const rawTokens = value
-    .split(/[\s,;|/]+/)
-    .map(token => token.trim())
-    .filter(Boolean);
-  const treatAsBinary = rawTokens.every(token => /^[01]+$/.test(token));
-  const tokens = treatAsBinary
-    ? parseBinaryOrDecimalTokens(value)
-    : rawTokens.map(token => {
-      const parsed = BigInt(token);
-      return { raw: token, value: parsed, width: Math.max(1, parsed.toString(2).length), binary: false };
-    });
+  const tokens = parseBinaryOrDecimalTokens(value);
   if (!tokens.length) throw new Error('Gray Code 解码需要二进制或十进制整数');
   return tokens
     .map(token => {
@@ -2717,8 +2736,9 @@ const decodeUtf16Bytes = (value: string, variant: string) => {
   return output;
 };
 
-const keyboardShift = (value: string, variant: string) => {
-  const direction = variant === 'hex' ? -1 : 1;
+const keyboardShift = (value: string, variant: string, decode = false) => {
+  const baseDirection = variant === 'hex' ? -1 : 1;
+  const direction = decode ? -baseDirection : baseDirection;
   const lookup = new Map<string, string>();
   for (const row of keyboardRows) {
     Array.from(row).forEach((char, index, chars) => {
@@ -3510,10 +3530,18 @@ const parseCryptoJsCipherInput = (CryptoJS: CryptoJsRuntime, value: string) => {
   const text = String(value || '').trim();
   if (!text) throw new Error('密文不能为空');
   try {
-    const payload = JSON.parse(text) as { ciphertext?: string; ciphertextEncoding?: string; iv?: string; mode?: string; alg?: string };
-    if (payload && typeof payload === 'object' && payload.ciphertext) {
-      const ciphertextText = String(payload.ciphertext).trim();
-      const encoding = String(payload.ciphertextEncoding || '').toLowerCase();
+    const payload = JSON.parse(text) as {
+      ciphertext?: string;
+      ciphertextHex?: string;
+      ciphertextEncoding?: string;
+      iv?: string;
+      ivHex?: string;
+      mode?: string;
+      alg?: string;
+    };
+    if (payload && typeof payload === 'object' && (payload.ciphertext || payload.ciphertextHex)) {
+      const ciphertextText = String(payload.ciphertextHex || payload.ciphertext).trim();
+      const encoding = payload.ciphertextHex ? 'hex' : String(payload.ciphertextEncoding || '').toLowerCase();
       const ciphertext = encoding === 'hex'
         ? CryptoJS.enc.Hex.parse(ciphertextText)
         : CryptoJS.enc.Base64.parse(ciphertextText);
@@ -3562,7 +3590,7 @@ const cryptoJsCipherTransform = async (operationId: OperationId, direction: Dire
 
   const key = parseCryptoJsWordArray(CryptoJS, params.secret, `${alg} key`);
   const parsedInput = direction === 'decode' ? parseCryptoJsCipherInput(CryptoJS, value) : null;
-  const payloadIv = parsedInput?.payload?.iv;
+  const payloadIv = parsedInput?.payload?.ivHex || parsedInput?.payload?.iv;
   const iv = optionalCryptoJsWordArray(CryptoJS, payloadIv || params.iv, 'IV');
   const modeName = variant === 'hex' ? 'ECB' : 'CBC';
   if (!stream && modeName === 'CBC' && !iv) throw new Error(`${alg}-CBC 需要填写 IV`);
@@ -3658,6 +3686,44 @@ type SymmetricInference = {
   notes: string[];
 };
 
+const chineseCtfFieldAliases: Array<[RegExp, string]> = [
+  [/(?:加密)?算法|算法类型|工作算法/, 'algorithm'],
+  [/(?:私钥|私有)指数/, 'privateexponent'],
+  [/(?:公钥|公开)指数/, 'publicexponent'],
+  [/(?:模数|模)/, 'modulus'],
+  [/(?:密钥|秘钥|口令|密码)/, 'key'],
+  [/(?:初始(?:化)?向量|初始化向量|向量)/, 'iv'],
+  [/(?:一次性)?随机数|随机向量/, 'nonce'],
+  [/(?:密文|加密数据|加密后的数据)/, 'ciphertext'],
+  [/(?:明文|原文|未加密数据)/, 'plaintext'],
+  [/(?:认证|验证)标签|标签/, 'tag'],
+  [/(?:附加认证数据|关联数据|附加数据)/, 'associateddata'],
+  [/(?:盐值?|加盐)/, 'salt'],
+  [/(?:计数器)/, 'counter'],
+  [/(?:欧拉函数|欧拉值)/, 'phi'],
+  [/(?:生成元|基元|底数)/, 'generator'],
+  [/(?:曲线阶|椭圆曲线阶|群阶|子群阶|阶数)/, 'order'],
+  [/(?:公钥|公开密钥)/, 'publickey'],
+  [/(?:乘数|乘法器|系数)/, 'multiplier'],
+  [/(?:增量|增值|常数项)/, 'increment'],
+  [/(?:输出序列|状态序列|随机序列|输出值|状态值)/, 'outputs'],
+  [/(?:种子)/, 'seed'],
+  [/(?:第一|质数一|素数一|质数1|素数1)(?:个)?(?:质数|素数)?/, 'prime1'],
+  [/(?:第二|质数二|素数二|质数2|素数2)(?:个)?(?:质数|素数)?/, 'prime2'],
+  [/(?:签名)/, 'signature'],
+  [/(?:曲线)/, 'curve'],
+  [/(?:消息|报文)/, 'message'],
+];
+
+const normalizeCtfFieldName = (value: string) => {
+  const normalized = value.normalize('NFKC').toLowerCase();
+  const compact = normalized.replace(/[\s_.()-]/g, '');
+  for (const [pattern, alias] of chineseCtfFieldAliases) {
+    if (pattern.test(compact)) return alias;
+  }
+  return normalized.replace(/[^a-z0-9]+/g, '');
+};
+
 const symmetricFieldAliases: Record<string, string> = {
   a: 'associatedData',
   ad: 'associatedData',
@@ -3703,7 +3769,7 @@ const symmetricFieldAliases: Record<string, string> = {
   taghex: 'tag',
 };
 
-const normalizeSymmetricFieldName = (value: string) => symmetricFieldAliases[value.toLowerCase().replace(/[^a-z0-9_]/g, '')] || null;
+const normalizeSymmetricFieldName = (value: string) => symmetricFieldAliases[normalizeCtfFieldName(value)] || null;
 
 const stripTrailingUnbalancedDelimiter = (value: string, open: string, close: string) => {
   let result = value;
@@ -3763,7 +3829,13 @@ const parseSymmetricFields = (value: string) => {
   } catch {
     // Fall through to CTF writeup / Python output style parsing.
   }
-  const text = value.replace(/\r\n/g, '\n');
+  const text = value.normalize('NFKC').replace(/\r\n/g, '\n');
+  for (const line of text.split('\n')) {
+    const lineField = line.match(/^\s*([^:=\r\n]{1,80}?)\s*[:=]\s*(.+?)\s*$/u);
+    if (lineField && normalizeSymmetricFieldName(lineField[1])) {
+      rememberSymmetricField(fields, lineField[1], lineField[2]);
+    }
+  }
   for (const match of text.matchAll(/\b([A-Za-z][A-Za-z0-9_. -]{0,40})\s*[:=]\s*b?(['"`])([\s\S]*?)\2/g)) {
     rememberSymmetricField(fields, match[1], match[3]);
   }
@@ -3773,7 +3845,7 @@ const parseSymmetricFields = (value: string) => {
   return fields;
 };
 
-const normalizeLooseFieldName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+const normalizeLooseFieldName = (value: string) => normalizeCtfFieldName(value);
 const looseSingleCharTokens = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'h', 'k', 'm', 'n', 'p', 'q', 'r', 's', 'u', 'v', 'x', 'y', 'z']);
 const isArithmeticFieldMatch = (source: string, index: number) => {
   let cursor = index - 1;
@@ -3827,10 +3899,9 @@ const parseLooseCtfFields = (value: string) => {
     // Plain CTF statements often use prose, Python repr, or one field per line.
   }
   // Normalize backslash line continuations before other parsing
-  const text = value
+  const text = value.normalize('NFKC')
     .replace(/\r\n/g, '\n')
     .replace(/\\\n\s*/g, '')
-    .replace(/＝/g, '=')       // Unicode fullwidth equals → ASCII =
     .replace(/`([^`]+)`/g, '$1')   // Strip markdown backticks
     .replace(/^#[^\n]*/gm, '');    // Strip comment lines starting with #
   // Handle int("hex_or_dec", base) expressions: key = int("abc123", 16)
@@ -3875,7 +3946,7 @@ const parseLooseCtfFields = (value: string) => {
     if (proseField && /(?:0x[0-9a-f]+|\d|[([{]|[A-Za-z0-9+/_=-]{6,})/i.test(proseField[2])) {
       rememberLooseField(fields, proseField[1], proseField[2]);
     }
-    const lineField = line.match(/^\s*([A-Za-z][A-Za-z0-9_. -]{0,40})\s*[:=]\s*(.+?)\s*$/);
+    const lineField = line.match(/^\s*([^:=\r\n]{1,80}?)\s*[:=]\s*(.+?)\s*$/u);
     if (lineField) rememberLooseField(fields, lineField[1], lineField[2]);
   }
   for (const match of text.matchAll(/\b([A-Za-z][A-Za-z0-9_. -]{0,40})\s*[:=]\s*b?(['"`])([\s\S]*?)\2/g)) {
@@ -7839,7 +7910,7 @@ const rsaParamAliases: Record<string, string> = {
   inversep: 'pinv',
 };
 
-const normalizeRsaParamName = (key: string) => rsaParamAliases[key.toLowerCase().replace(/[^a-z0-9]/g, '')] || null;
+const normalizeRsaParamName = (key: string) => rsaParamAliases[normalizeCtfFieldName(key)] || null;
 
 const isCommonRsaPublicExponent = (value: bigint) => [3n, 5n, 17n, 257n, 65537n].includes(value);
 
@@ -10173,7 +10244,7 @@ const collectRsaAutomatedAttacks = (value: string) => {
 
 const trySmartRsaDecrypt = (value: string) => {
   const lower = value.toLowerCase();
-  if (!/\brsa\b/.test(lower) && /\b(?:lcg|linear congruential|lfsr|mt19937|mersenne|keystream|outputs?|states?|samples?)\b/.test(lower)) return null;
+  if (!/\brsa\b/.test(lower) && /\b(?:lcg|linear congruential|lfsr|mt19937|mersenne|keystream|outputs?|states?|samples?)\b|线性同余|同余生成器|伪随机|随机数|输出序列|状态序列/.test(lower)) return null;
   if (!/\brsa\b/.test(lower) && /\b(?:ecdsa|dsa|schnorr|signature|nonce reuse|same nonce|reused nonce)\b/.test(lower)) return null;
   const inference = inferRsaParamsFromText(value, 'decode');
   const advanced = collectRsaAutomatedAttacks(value);
@@ -10410,7 +10481,7 @@ const inferLcgFromText = (value: string, secret = ''): LcgInference => {
       : parseNumericList(stripPrngScalarAssignments(value));
   const lower = value.toLowerCase();
   let confidence = 0;
-  if (/\blcg\b|linear congruential|x\s*\[\s*n\s*\+\s*1\s*\]|x_?n\s*=/.test(lower)) confidence += 6;
+  if (/\blcg\b|linear congruential|x\s*\[\s*n\s*\+\s*1\s*\]|x_?n\s*=|线性同余|同余生成器/.test(lower)) confidence += 6;
   if (states.length >= 4) confidence += 5;
   else if (states.length >= 2) confidence += 2;
   if (modulus) confidence += 2;
@@ -10986,14 +11057,16 @@ const streamToBytes = async (stream: ReadableStream<Uint8Array>) => {
 };
 
 const compressText = async (value: string, format: CompressionFormat) => {
-  if (!('CompressionStream' in window)) throw new Error('当前浏览器不支持 CompressionStream');
-  const stream = new Blob([value]).stream().pipeThrough(new CompressionStream(format));
+  const CompressionStreamCtor = globalThis.CompressionStream;
+  if (!CompressionStreamCtor) throw new Error('当前运行环境不支持 CompressionStream');
+  const stream = new Blob([value]).stream().pipeThrough(new CompressionStreamCtor(format));
   return bytesToBase64(await streamToBytes(stream));
 };
 
 const decompressText = async (value: string, format: CompressionFormat) => {
-  if (!('DecompressionStream' in window)) throw new Error('当前浏览器不支持 DecompressionStream');
-  const stream = new Blob([base64ToBytes(value)]).stream().pipeThrough(new DecompressionStream(format));
+  const DecompressionStreamCtor = globalThis.DecompressionStream;
+  if (!DecompressionStreamCtor) throw new Error('当前运行环境不支持 DecompressionStream');
+  const stream = new Blob([base64ToBytes(value)]).stream().pipeThrough(new DecompressionStreamCtor(format));
   return utf8Decoder.decode(await streamToBytes(stream));
 };
 
@@ -12170,6 +12243,43 @@ const parseSignatureNonceRecords = (value: string) => {
       },
     });
   }
+  const chineseSignatureRecords = new Map<string, { r?: bigint; s?: bigint; z?: bigint; raw: Record<string, string> }>();
+  for (const line of value.normalize('NFKC').split(/\r?\n/)) {
+    const match = line.match(/^\s*(签名|哈希|摘要|消息哈希)\s*(\d+)\s*[:=]\s*(.+?)\s*$/u);
+    if (!match) continue;
+    const index = match[2];
+    const entry = chineseSignatureRecords.get(index) || { raw: {} };
+    const label = match[1];
+    const content = cleanSymmetricFieldValue(match[3]);
+    if (label === '签名') {
+      const parsed = parseSignatureBlobToRS(content);
+      if (parsed) {
+        entry.r = parsed.r;
+        entry.s = parsed.s;
+        entry.raw.signature = content;
+        entry.raw.signatureformat = parsed.format;
+      }
+    } else {
+      const numeric = parseNumericValue(content);
+      if (numeric != null) {
+        entry.z = numeric;
+        entry.raw.z = content;
+      }
+    }
+    chineseSignatureRecords.set(index, entry);
+  }
+  for (const [index, record] of chineseSignatureRecords) {
+    if (record.r != null && record.s != null) {
+      records.push({
+        index: `cn-${index}`,
+        r: record.r,
+        s: record.s,
+        z: record.z ?? null,
+        message: null,
+        raw: record.raw,
+      });
+    }
+  }
   for (const [lineIndex, line] of value.split(/\r?\n/).entries()) {
     if (!/\br\s*[:=]/i.test(line) && !/\bs\s*[:=]/i.test(line) && !/\b(?:signature|sig|der)\s*[:=]/i.test(line)) continue;
     const lineFields = parseLooseCtfFields(line);
@@ -12261,7 +12371,7 @@ const inferSignatureNonceReuseFromText = (value: string) => {
     };
   });
   let confidence = 0;
-  if (/\b(?:ecdsa|dsa|schnorr|signature|nonce reuse|same nonce|reused nonce)\b/.test(lower)) confidence += 6;
+  if (/\b(?:ecdsa|dsa|schnorr|signature|nonce reuse|same nonce|reused nonce)\b|重复随机数|随机数复用|重复 nonce|nonce 复用|签名重复/.test(lower)) confidence += 6;
   if (records.length >= 2) confidence += 2;
   if (repeatedPairs.length) confidence += 5;
   if (globalOrder != null || records.some(record => inferSignatureOrder(record.raw) != null)) confidence += 2;
@@ -12589,7 +12699,7 @@ const signatureNonceReuseHelper = async (value: string) => {
 
 const trySmartDiscreteLog = (value: string) => {
   const inference = inferDlpFromText(value);
-  const hasStrongHint = /\b(discrete log|dlog|diffie|elgamal|generator|baby-step|bsgs|pohlig)\b/i.test(value);
+  const hasStrongHint = /\b(discrete log|dlog|diffie|elgamal|generator|baby-step|bsgs|pohlig)\b|离散对数|迪菲|Diffie|ElGamal|生成元|椭圆曲线密码/i.test(value);
   if (inference.confidence < 6 || (!hasStrongHint && (inference.modulus == null || inference.base == null || inference.target == null))) return null;
   try {
     return `智能识别: Discrete log / ElGamal analysis\n\n${discreteLogHelper(value)}`;
@@ -12622,7 +12732,7 @@ const inferDlpFromText = (value: string): DlpInference => {
   const fields = parseLooseCtfFields(value);
   const modulus = parseDlpField(fields, ['p', 'prime', 'mod', 'modulus']);
   const base = parseDlpField(fields, ['g', 'generator', 'base', 'alpha']);
-  const target = parseDlpField(fields, ['h', 'y', 'public', 'publickey', 'beta', 'value', 'ya', 'pub_a', 'alice_public', 'alice_key']);
+  const target = parseDlpField(fields, ['h', 'y', 'public', 'publickey', 'pubkey', 'beta', 'value', 'ya', 'pub_a', 'alice_public', 'alice_key']);
   const explicitOrder = looseField(fields, ['q', 'order', 'grouporder', 'subgrouporder']);
   const order = (explicitOrder ? parseNumericValue(explicitOrder) : null) || (modulus != null ? modulus - 1n : null);
   const ciphertextTuple = parseNumericTuple(looseField(fields, ['ciphertext', 'cipher', 'ct', 'enc', 'elgamalcipher', 'pair', 'tuple']));
@@ -13261,14 +13371,104 @@ const trySmartModDecode = (value: string): string | null => {
   return null;
 };
 
+const extractSmartRawPayloadCandidate = (value: string) => {
+  const fields = parseLooseCtfFields(value);
+  const aliases = [
+    'hex', 'base64', 'b64', 'base32', 'b32', 'binary', 'octal',
+    'ciphertext', 'cipher', 'encoded', 'encoding', 'ct', 'data', 'output', 'result', 'answer',
+  ];
+  for (const alias of aliases) {
+    const candidate = cleanLooseFieldValue(looseField(fields, [alias]));
+    const compact = candidate.replace(/\s+/g, '');
+    if (compact.length < 4) continue;
+    if (/^(?:0x)?[0-9a-f]+$/i.test(compact) || /^[A-Za-z0-9+/_=-]+$/.test(compact)) return candidate;
+  }
+  return null;
+};
+
+const trySmartStructuredDecode = async (value: string): Promise<string | null> => {
+  const text = value.trim();
+  if (!text) return null;
+  try {
+    if (/^data:[^,]*,/is.test(text)) {
+      const output = await transform('data-url', 'decode', text, defaultParams);
+      return `智能识别: Data URL\n\n${output}`;
+    }
+    if (/^Basic\s+[A-Za-z0-9+/=_-]+$/i.test(text)) {
+      return `智能识别: HTTP Basic Authorization\n\n${await transform('basic-auth', 'decode', text, defaultParams)}`;
+    }
+    if (/^otpauth:\/\//i.test(text)) {
+      return `智能识别: otpauth URI\n\n${await decodeOtpAuthUriCompat(text)}`;
+    }
+    if (/^(?:https?:\/\/)?(?:[\w-]+\.)?xn--[a-z0-9-]+(?:\.[\w.-]+)*\/?$/i.test(text)) {
+      return `智能识别: Punycode / IDN\n\n${await transform('punycode', 'decode', text, defaultParams)}`;
+    }
+    if (/^(?:https?:\/\/)?[^\s?]+\?[^\s]+$/.test(text)) {
+      return `智能识别: Query String\n\n${decodeQuery(text)}`;
+    }
+    if (/^[A-Za-z0-9+/_=-\s]+$/.test(text) && text.replace(/\s+/g, '').length >= 12) {
+      try {
+        const bytes = base64ToBytes(text);
+        if (bytes.length >= 3 && bytes[0] === 0x1f && bytes[1] === 0x8b && bytes[2] === 0x08) {
+          return `智能识别: Base64 GZip\n\n${await decompressText(text, 'gzip')}`;
+        }
+      } catch {
+        // Not a valid Base64-compressed container.
+      }
+    }
+    if (/^[\w-]+\.[\w-]+\.[\w-]*$/i.test(text.replace(/^Bearer\s+/i, ''))) {
+      return `智能识别: JWT\n\n${decodeJwt(text)}`;
+    }
+    if (/^[\w-]+\.[\w-]*\.[\w-]*\.[\w-]*\.[\w-]+$/i.test(text)) {
+      return `智能识别: JWE Compact\n\n${parseJwkJwe(text)}`;
+    }
+    if (/^-----BEGIN [^-]+-----/m.test(text)) {
+      try {
+        return `智能识别: PEM / ASN.1\n\n${parseAsn1Der(text)}`;
+      } catch {
+        return `智能识别: PEM Block\n\n${decodePemBlock(text)}`;
+      }
+    }
+    if (/^(?:ssh-|ecdsa-|sk-)/m.test(text) || /\s(?:ssh-|ecdsa-|sk-)[A-Za-z0-9@._-]*\s+[A-Za-z0-9+/=]+/.test(text)) {
+      return `智能识别: OpenSSH Public Key\n\n${await parseSshPublicKey(text)}`;
+    }
+    if (/^\s*\{/.test(text) && /"(?:kty|keys|protected|ciphertext|recipients)"/.test(text)) {
+      return `智能识别: JWK / JWE\n\n${parseJwkJwe(text)}`;
+    }
+    if (/^U2FsdGVkX1/i.test(text.replace(/\s+/g, ''))) {
+      return `智能识别: OpenSSL Salted__ AES\n\n${JSON.stringify({
+        format: 'OpenSSL enc Salted__',
+        note: '识别到 OpenSSL EVP_BytesToKey-MD5 容器；请填写 passphrase 后使用 OpenSSL AES-256-CBC 解密。',
+      }, null, 2)}`;
+    }
+    try {
+      const parsed = parseFernetRaw(text);
+      if (parsed.version === 0x80) {
+        return `智能识别: Fernet\n\n${await decodeFernet(text, '')}`;
+      }
+    } catch {
+      // Not a Fernet token.
+    }
+  } catch {
+    // Keep the generic decoder available when a container is malformed.
+  }
+  return null;
+};
+
 const smartDecode = async (value: string): Promise<string> => {
   // Strip common CTF output noise prefixes: "Flag: ", "[*] Encrypted: ", ">>> cipher =", etc.
-  const stripped = value
+  const normalizedValue = value.normalize('NFKC');
+  const stripped = /^\s*data:/i.test(normalizedValue)
+    ? normalizedValue.trim()
+    : normalizedValue
     .replace(/^\s*\[[*+\-!]\]\s*/i, '')                            // [*] [+] [-] [!] tool output prefix
     .replace(/^\s*>>>\s*/i, '')                                   // Python REPL prompt
     .replace(/^\s*(?:\w+[ \t]+){0,3}(?:flag|output|ciphertext|encrypted|decrypted|result|enc|ct|cipher|answer|solution|plaintext|decode|decoded|hex|base64|b64|binary|b32|octal|ascii|encoded|ciphered|secret|text|message|data|rot|xor|aes|key|token|hash|mac|sig|digest|signature|nonce|iv|salt|seed|pt|value|flag_enc|flag_hex)\b[ \t]*(?:\w+[ \t]*)?(?:\([^\r\n)]*\)[ \t]*)?(?:is[ \t]*)?[:=][ \t]*/i, '')
+    .replace(/^\s*(?:(?:题目(?:内容|附件)?|挑战|附件|任务)[ \t_-]*)?(?:密文|加密数据|编码(?:内容|数据)?|输出|结果|答案|十六进制|二进制|八进制|明文)(?:[ \t]*(?:\([^\r\n)]{0,40}\)|\[[^\r\n\]]{0,40}\]))?[ \t]*(?:为|是)?[ \t]*[:=][ \t]*/iu, '')
     .trim();
-  const input = stripped !== value.trim() ? stripped : value;
+  const input = stripped !== normalizedValue.trim() ? stripped : normalizedValue;
+  const smartStructured = await trySmartStructuredDecode(input);
+  if (smartStructured) return smartStructured;
   const smartDlp = trySmartDiscreteLog(input);
   if (smartDlp) return smartDlp;
   const smartEcc = trySmartEccHelper(input);
@@ -13337,7 +13537,8 @@ const smartDecode = async (value: string): Promise<string> => {
     const stripped = input.replace(/^[0-9a-fA-F]{4,}[:\s]+/gm, '').replace(/\|.*\|/g, '').replace(/\s+/g, '');
     return /^[0-9a-fA-F]+$/.test(stripped) && stripped.length >= 4 ? stripped : null;
   })();
-  let current = hexdumpCleaned ?? (pyHexArrayConverted ?? (bytesFromHexMatch ? bytesFromHexMatch[1].replace(/\s/g, '') : pythonBytesMatch ? pythonBytesMatch[2] : input));
+  const labeledPayload = extractSmartRawPayloadCandidate(input);
+  let current = hexdumpCleaned ?? (pyHexArrayConverted ?? (bytesFromHexMatch ? bytesFromHexMatch[1].replace(/\s/g, '') : pythonBytesMatch ? pythonBytesMatch[2] : labeledPayload ?? input));
   const steps: string[] = [];
   for (let depth = 0; depth < 12; depth += 1) {
     if (depth > 0 && looksLikeResolvedSmartDecodeText(current)) break;
@@ -14711,7 +14912,7 @@ async function transform(operationId: OperationId, direction: Direction, input: 
     case 'reverse-text':
       return Array.from(input).reverse().join('');
     case 'keyboard-shift':
-      return keyboardShift(input, params.variant);
+      return keyboardShift(input, params.variant, direction === 'decode');
     case 'zero-width':
       return direction === 'encode' ? zeroWidthEncode(input) : zeroWidthDecode(input);
     case 'hash':
@@ -14859,7 +15060,7 @@ async function transform(operationId: OperationId, direction: Direction, input: 
     case 'brainfuck':
       return direction === 'encode' ? encodeBrainfuckText(input) : runBrainfuck(input, params.secret, params.iterations);
     case 'ook':
-      return direction === 'encode' ? brainfuckToOokText(input) : runBrainfuck(ookToBrainfuckText(input), '', '100000');
+      return direction === 'encode' ? brainfuckToOokText(input) : ookToBrainfuckText(input);
     case 'jsfuck-helper':
       return jsfuckInspector(input);
     case 'jwt':

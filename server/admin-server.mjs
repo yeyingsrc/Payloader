@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createHash, createHmac, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { isIP } from 'node:net';
 import { extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -14,7 +15,9 @@ import {
 import {
   createDataExportPackage,
   createImportTemplate,
+  closeStore,
   deleteAdminItem,
+  deleteCustomContent,
   ensureStoreReady,
   getMetadataValue,
   getResetImpact,
@@ -22,14 +25,21 @@ import {
   getPublicData,
   importDataPackage,
   listAdminItems,
+  listCustomContent,
+  listCustomPayloads,
   moveAdminItem,
   previewImportPackage,
   resetDefaultData,
   saveAdminItem,
+  saveCustomContent,
   saveNavigationItem,
   saveSettings,
   setMetadataValue,
 } from './data-store.mjs';
+import { createPublicDataResponder } from './public-data-response.mjs';
+import { officialProjectUrl, publicProjectRoute } from './project-attribution.mjs';
+import { createShutdownController } from './server-lifecycle.mjs';
+import { createVersionChecker, VERSION_STATUS_METADATA_KEY } from './version-checker.mjs';
 
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const distDir = join(rootDir, 'dist');
@@ -47,17 +57,18 @@ const configuredAdminPassword = String(process.env.PAYLOADER_ADMIN_PASSWORD || '
 const defaultAdminUser = configuredAdminUser || bundledDefaultAdminUser;
 const defaultAdminPassword = configuredAdminPassword || bundledDefaultAdminPassword;
 const loopbackHosts = new Set(['127.0.0.1', '::1', 'localhost']);
-const requiresExplicitInitialCredentials = process.env.NODE_ENV === 'production'
-  || !loopbackHosts.has(host.toLowerCase());
+const allowInsecureDevCredentials = process.env.PAYLOADER_ALLOW_INSECURE_DEV_CREDENTIALS === 'true'
+  && process.env.NODE_ENV !== 'production'
+  && loopbackHosts.has(host.toLowerCase());
+const requiresExplicitInitialCredentials = !allowInsecureDevCredentials;
+const publishedExampleAdminPasswords = new Set([bundledDefaultAdminPassword, 'Change-Me-2026!']);
 const pathSeparator = process.platform === 'win32' ? '\\' : '/';
-const sessionCookieName = 'payloader_admin_session';
 const sessionTtlMs = Number(process.env.PAYLOADER_ADMIN_SESSION_TTL_MS || 8 * 60 * 60 * 1000);
-const cookieSecure = process.env.PAYLOADER_COOKIE_SECURE === 'true';
 const jwtSecretFile = join(dataDir, 'admin-jwt-secret.key');
 const jwtIssuer = 'payloader-admin';
 const jwtAudience = 'payloader-admin-panel';
 const jwtClockSkewSec = 30;
-const maxJwtCookieLength = 2048;
+const maxJwtBearerLength = 2048;
 const credentialsMetadataKey = 'admin_credentials';
 const credentialHashParams = Object.freeze({
   algorithm: 'scrypt',
@@ -109,11 +120,36 @@ const baseResponseHeaders = {
   'cross-origin-opener-policy': 'same-origin',
   'content-security-policy': contentSecurityPolicy,
 };
+const publicDataResponder = createPublicDataResponder({
+  loadData: getPublicData,
+  responseHeaders: baseResponseHeaders,
+});
+const applicationVersionChecker = createVersionChecker({
+  repositoryUrl: officialProjectUrl,
+  projectRoute: publicProjectRoute,
+  loadStatus: () => getMetadataValue(VERSION_STATUS_METADATA_KEY, ''),
+  saveStatus: value => setMetadataValue(VERSION_STATUS_METADATA_KEY, value),
+});
 const rateBuckets = new Map();
 const adminSessions = new Map();
 const adminRequestLimit = { windowMs: 60_000, max: 300 };
 const failedAuthLimit = { windowMs: 60_000, max: 12 };
-const loginAttemptLimit = { windowMs: 60_000, max: 8 };
+const failedLoginLimit = { windowMs: 60_000, max: 8 };
+const trustedProxyConfig = String(process.env.PAYLOADER_TRUSTED_PROXIES || '')
+  .split(',')
+  .map(item => item.trim().toLowerCase())
+  .filter(Boolean);
+const trustedProxyAddresses = new Set();
+let trustLoopbackProxies = false;
+for (const entry of trustedProxyConfig) {
+  if (entry === 'loopback') {
+    trustLoopbackProxies = true;
+  } else if (isIP(entry)) {
+    trustedProxyAddresses.add(entry);
+  } else {
+    throw new Error(`Invalid PAYLOADER_TRUSTED_PROXIES entry: ${entry}`);
+  }
+}
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -378,11 +414,29 @@ const loadAdminCredentials = async () => {
   if (stored) {
     try {
       const credentials = normalizeStoredAdminCredentials(JSON.parse(stored));
-      if (
-        requiresExplicitInitialCredentials
-        && await verifyAdminPasswordHash(bundledDefaultAdminPassword, credentials.passwordHash)
-      ) {
-        throw new Error('Stored administrator credentials still use the bundled default password. Change them before exposing Payloader.');
+      if (requiresExplicitInitialCredentials) {
+        for (const publishedPassword of publishedExampleAdminPasswords) {
+          if (!await verifyAdminPasswordHash(publishedPassword, credentials.passwordHash)) continue;
+          const label = publishedPassword === bundledDefaultAdminPassword ? 'bundled default' : 'published example';
+          if (
+            configuredAdminUser
+            && configuredAdminPassword
+            && !publishedExampleAdminPasswords.has(configuredAdminPassword)
+          ) {
+            const timestamp = new Date().toISOString();
+            const migrated = {
+              username: validateAdminUsername(configuredAdminUser),
+              passwordHash: await hashAdminPassword(validateAdminPassword(configuredAdminPassword)),
+              version: randomUUID(),
+              createdAt: credentials.createdAt || timestamp,
+              updatedAt: timestamp,
+              source: 'published-password-migration',
+            };
+            await setMetadataValue(credentialsMetadataKey, JSON.stringify(migrated));
+            return migrated;
+          }
+          throw new Error(`Stored administrator credentials still use the ${label} password. Provide new strong PAYLOADER_ADMIN_USER and PAYLOADER_ADMIN_PASSWORD values for one startup to migrate them.`);
+        }
       }
       return credentials;
     } catch (error) {
@@ -399,8 +453,8 @@ const loadAdminCredentials = async () => {
   const initialPassword = String(defaultAdminPassword || '');
   if (requiresExplicitInitialCredentials) {
     validateAdminPassword(initialPassword);
-    if (initialPassword === bundledDefaultAdminPassword) {
-      throw new Error('PAYLOADER_ADMIN_PASSWORD must not use the bundled default password.');
+    if (publishedExampleAdminPasswords.has(initialPassword)) {
+      throw new Error('PAYLOADER_ADMIN_PASSWORD must not use a published example password.');
     }
   } else if (initialPassword.length < 8 || initialPassword.length > 128) {
     throw new Error('Initial PAYLOADER_ADMIN_PASSWORD must be 8-128 characters.');
@@ -462,24 +516,6 @@ const saveAdminCredentials = async ({ username, currentPassword, newPassword }) 
   return publicCredentialInfo(credentials);
 };
 
-const parseCookies = request => {
-  const raw = String(request.headers.cookie || '');
-  const cookies = new Map();
-  for (const part of raw.split(';')) {
-    const index = part.indexOf('=');
-    if (index < 0) continue;
-    const name = part.slice(0, index).trim();
-    const value = part.slice(index + 1).trim();
-    if (!name || cookies.has(name)) continue;
-    try {
-      cookies.set(name, decodeURIComponent(value));
-    } catch {
-      // Ignore malformed cookie values instead of failing the whole request.
-    }
-  }
-  return cookies;
-};
-
 let jwtSecretPromise;
 
 const base64UrlJson = value => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -513,7 +549,7 @@ const loadJwtSecret = async () => {
   const generated = randomBytes(64);
   await mkdir(dataDir, { recursive: true });
   try {
-    await writeFile(jwtSecretFile, `${generated.toString('base64url')}\n`, { flag: 'wx' });
+    await writeFile(jwtSecretFile, `${generated.toString('base64url')}\n`, { flag: 'wx', mode: 0o600 });
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
     const stored = (await readFile(jwtSecretFile, 'utf8')).trim();
@@ -541,6 +577,7 @@ export const ensureApplicationReady = async () => {
     ensureStoreReady(),
     getAdminCredentials(),
     getJwtSecret(),
+    publicDataResponder.prepare(),
   ]);
   return true;
 };
@@ -575,21 +612,6 @@ const verifyJwt = async token => {
   return payload;
 };
 
-const sessionCookie = (token, options = {}) => {
-  const attributes = [
-    `${sessionCookieName}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Strict',
-    `Max-Age=${options.maxAge ?? Math.max(1, Math.floor(sessionTtlMs / 1000))}`,
-  ];
-  if (cookieSecure) attributes.push('Secure');
-  return attributes.join('; ');
-};
-
-const clearSessionCookie = () => sessionCookie('', { maxAge: 0 });
-const adminLoginAssetPaths = new Set(['/admin/admin.css', '/admin/login.js']);
-
 const cleanupSessions = () => {
   const now = Date.now();
   for (const [sessionId, session] of adminSessions.entries()) {
@@ -604,7 +626,6 @@ const createAdminSession = async request => {
   const credentials = await getAdminCredentials();
   const sessionId = newToken(24);
   const jwtId = newToken(32);
-  const csrfToken = newToken(32);
   const now = Date.now();
   const nowSec = Math.floor(now / 1000);
   const expiresAt = now + sessionTtlMs;
@@ -621,19 +642,25 @@ const createAdminSession = async request => {
   });
   adminSessions.set(jwtId, {
     sessionId,
-    csrfToken,
     createdAt: now,
     expiresAt,
     tokenHash: hashText(token).toString('base64url'),
     userAgentHash: hashText(request.headers['user-agent'] || '').toString('base64url'),
   });
-  return { sessionId, jwtId, token, csrfToken, expiresAt };
+  return { sessionId, jwtId, token, expiresAt };
+};
+
+const readBearerToken = request => {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== 'string' || authorization.length > maxJwtBearerLength + 16) return '';
+  const match = authorization.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i);
+  return match?.[1] || '';
 };
 
 const readAdminSession = async request => {
   cleanupSessions();
-  const token = parseCookies(request).get(sessionCookieName);
-  if (!token || token.length > maxJwtCookieLength) return null;
+  const token = readBearerToken(request);
+  if (!token || token.length > maxJwtBearerLength) return null;
   const jwtPayload = await verifyJwt(token);
   if (!jwtPayload) return null;
   const session = adminSessions.get(jwtPayload.jti);
@@ -651,18 +678,36 @@ const readAdminSession = async request => {
 
 const isAuthorized = async request => Boolean(await readAdminSession(request));
 
-const isStateChangingMethod = method => !['GET', 'HEAD', 'OPTIONS'].includes(method);
-
-const hasValidCsrf = async request => {
-  if (!isStateChangingMethod(request.method)) return true;
-  const session = await readAdminSession(request);
-  if (!session) return false;
-  const headerToken = String(request.headers['x-payloader-csrf'] || '');
-  if (headerToken.length < 32 || headerToken.length > 256) return false;
-  return timingSafeEqual(hashText(headerToken), hashText(session.csrfToken));
+const normalizeIpAddress = value => {
+  let address = String(value || '').trim().toLowerCase();
+  if (address.startsWith('[') && address.endsWith(']')) address = address.slice(1, -1);
+  if (address.startsWith('::ffff:') && isIP(address.slice(7)) === 4) address = address.slice(7);
+  return isIP(address) ? address : '';
 };
 
-const clientKey = request => request.socket.remoteAddress || 'local';
+const isLoopbackAddress = address => address === '127.0.0.1' || address === '::1';
+
+const isTrustedProxyAddress = address => (
+  trustedProxyAddresses.has(address) || (trustLoopbackProxies && isLoopbackAddress(address))
+);
+
+const forwardedClientAddress = (request, peerAddress) => {
+  if (!isTrustedProxyAddress(peerAddress)) return '';
+  const forwarded = request.headers['x-forwarded-for'];
+  if (typeof forwarded !== 'string' || forwarded.length > 2048) return '';
+  const chain = forwarded.split(',').map(normalizeIpAddress);
+  if (!chain.length || chain.some(address => !address)) return '';
+  let resolved = peerAddress;
+  for (let index = chain.length - 1; index >= 0 && isTrustedProxyAddress(resolved); index -= 1) {
+    resolved = chain[index];
+  }
+  return resolved === peerAddress ? '' : resolved;
+};
+
+const clientKey = request => {
+  const peerAddress = normalizeIpAddress(request.socket.remoteAddress) || 'local';
+  return forwardedClientAddress(request, peerAddress) || peerAddress;
+};
 
 const checkRateLimit = (request, response, scope, limit) => {
   const key = `${scope}:${clientKey(request)}`;
@@ -691,6 +736,10 @@ const checkRateLimit = (request, response, scope, limit) => {
   return false;
 };
 
+const clearRateLimit = (request, scope) => {
+  rateBuckets.delete(`${scope}:${clientKey(request)}`);
+};
+
 const unauthorized = (request, response) => {
   if (request.url && String(request.url).startsWith('/api/')) {
     json(response, 401, { error: '登录已失效，请重新登录' });
@@ -703,11 +752,6 @@ const unauthorized = (request, response) => {
   });
   response.end();
   return false;
-};
-
-const forbiddenCsrf = response => {
-  json(response, 403, { error: '安全校验失败，请刷新后台后重试' });
-  return true;
 };
 
 const requireAuth = async (request, response) => {
@@ -769,6 +813,29 @@ const serveStatic = async (request, response, filePath, options = {}) => {
       return;
     }
     createReadStream(filePath).pipe(response);
+  } catch {
+    text(response, 404, 'Not found');
+  }
+};
+
+const stripXeyeIntegration = source => source
+  .replace(/\s*<script id="xeye-structured-data"[\s\S]*?<\/script>/, '')
+  .replace(/\s*<a data-xeye-platform-link[\s\S]*?<\/a>/, '');
+
+const serveFrontendIndex = async (request, response, filePath) => {
+  try {
+    const [source, settings] = await Promise.all([
+      readFile(filePath, 'utf8'),
+      getSettings(),
+    ]);
+    const body = settings.xeyeEnabled ? source : stripXeyeIntegration(source);
+    response.writeHead(200, {
+      ...baseResponseHeaders,
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'content-length': Buffer.byteLength(body),
+    });
+    response.end(request.method === 'HEAD' ? undefined : body);
   } catch {
     text(response, 404, 'Not found');
   }
@@ -999,7 +1066,6 @@ const handleAdminAuthApi = async (request, response, url) => {
     json(response, 200, {
       authenticated: true,
       user: credentials.username,
-      csrfToken: session.csrfToken,
       expiresAt: session.expiresAt,
     });
     return true;
@@ -1010,27 +1076,27 @@ const handleAdminAuthApi = async (request, response, url) => {
       methodNotAllowed(response, ['POST']);
       return true;
     }
-    if (!checkRateLimit(request, response, 'admin-login', loginAttemptLimit)) return true;
     const body = await parseJsonBody(request, 16_384, { requireJson: true });
     const user = typeof body.username === 'string' ? body.username : '';
     const password = typeof body.password === 'string' ? body.password : '';
     if (user.length > 256 || password.length > 1024 || !await validAdminCredentials(user, password)) {
-      if (!checkRateLimit(request, response, 'admin-login-failed', failedAuthLimit)) return true;
+      if (!checkRateLimit(request, response, 'admin-login-failed', failedLoginLimit)) return true;
       json(response, 401, { error: '账号或密码不正确' });
       return true;
     }
+    clearRateLimit(request, 'admin-login-failed');
     const credentials = await getAdminCredentials();
     const session = await createAdminSession(request);
     response.writeHead(200, {
       ...baseResponseHeaders,
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
-      'set-cookie': sessionCookie(session.token),
     });
     response.end(JSON.stringify({
       authenticated: true,
       user: credentials.username,
-      csrfToken: session.csrfToken,
+      accessToken: session.token,
+      tokenType: 'Bearer',
       expiresAt: session.expiresAt,
     }));
     return true;
@@ -1042,16 +1108,11 @@ const handleAdminAuthApi = async (request, response, url) => {
       return true;
     }
     const session = await readAdminSession(request);
-    if (session && !await hasValidCsrf(request)) {
-      forbiddenCsrf(response);
-      return true;
-    }
     if (session) adminSessions.delete(session.jwtId);
     response.writeHead(200, {
       ...baseResponseHeaders,
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
-      'set-cookie': clearSessionCookie(),
     });
     response.end(JSON.stringify({ ok: true }));
     return true;
@@ -1060,12 +1121,29 @@ const handleAdminAuthApi = async (request, response, url) => {
   return false;
 };
 
-const handleAdminApi = async (request, response, url) => {
+const handleAdminApi = async (request, response, url, services) => {
   if (!url.pathname.startsWith('/api/admin/')) return false;
   if (await handleAdminAuthApi(request, response, url)) return true;
   if (!checkRateLimit(request, response, 'admin-request', adminRequestLimit)) return true;
   if (!await requireAuth(request, response)) return true;
-  if (!await hasValidCsrf(request)) return forbiddenCsrf(response);
+
+  if (url.pathname === '/api/admin/version-status') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response, ['GET']);
+      return true;
+    }
+    json(response, 200, await services.versionChecker.getStatus());
+    return true;
+  }
+
+  if (url.pathname === '/api/admin/version-check') {
+    if (request.method !== 'POST') {
+      methodNotAllowed(response, ['POST']);
+      return true;
+    }
+    json(response, 200, await services.versionChecker.checkNow());
+    return true;
+  }
 
   if (url.pathname === '/api/admin/export') {
     if (request.method !== 'GET') {
@@ -1083,6 +1161,49 @@ const handleAdminApi = async (request, response, url) => {
       'cache-control': 'no-store',
     });
     response.end(body);
+    return true;
+  }
+
+  if (url.pathname === '/api/admin/custom-payloads') {
+    if (request.method !== 'GET') {
+      methodNotAllowed(response, ['GET']);
+      return true;
+    }
+    json(response, 200, { items: await listCustomPayloads() });
+    return true;
+  }
+
+  if (url.pathname === '/api/admin/custom-content') {
+    if (request.method === 'GET') {
+      json(response, 200, { items: await listCustomContent() });
+      return true;
+    }
+    if (request.method === 'POST') {
+      json(response, 201, await saveCustomContent(await parseAdminJsonBody(request)));
+      return true;
+    }
+    methodNotAllowed(response, ['GET', 'POST']);
+    return true;
+  }
+
+  if (url.pathname.startsWith('/api/admin/custom-content/')) {
+    const id = decodeUrlPath(url.pathname.slice('/api/admin/custom-content/'.length));
+    if (!id || id.length > 160 || /[\\/\0]/.test(id)) {
+      throw new HttpError(400, '自定义内容 ID 无效');
+    }
+    if (request.method === 'PUT') {
+      const body = await parseAdminJsonBody(request);
+      json(response, 200, await saveCustomContent({ ...body, id }));
+      return true;
+    }
+    if (request.method === 'DELETE') {
+      json(response, 200, await deleteCustomContent({
+        id,
+        destination: url.searchParams.get('destination'),
+      }));
+      return true;
+    }
+    methodNotAllowed(response, ['PUT', 'DELETE']);
     return true;
   }
 
@@ -1127,7 +1248,6 @@ const handleAdminApi = async (request, response, url) => {
         ...baseResponseHeaders,
         'content-type': 'application/json; charset=utf-8',
         'cache-control': 'no-store',
-        'set-cookie': clearSessionCookie(),
       });
       response.end(JSON.stringify({ ...saved, reauthRequired: true }));
       return true;
@@ -1332,12 +1452,26 @@ const handlePublicApi = async (request, response, url) => {
     return true;
   }
 
+  if (url.pathname === publicProjectRoute) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      methodNotAllowed(response, ['GET', 'HEAD']);
+      return true;
+    }
+    response.writeHead(302, {
+      ...baseResponseHeaders,
+      location: officialProjectUrl,
+      'cache-control': 'no-store',
+    });
+    response.end();
+    return true;
+  }
+
   if (url.pathname === '/api/public-data') {
     if (request.method !== 'GET') {
       methodNotAllowed(response, ['GET']);
       return true;
     }
-    json(response, 200, await getPublicData());
+    await publicDataResponder.respond(request, response);
     return true;
   }
 
@@ -1416,7 +1550,7 @@ const handlePublicApi = async (request, response, url) => {
   return false;
 };
 
-const handleRequest = async (request, response) => {
+const handleRequest = async (request, response, services) => {
   try {
     if (String(request.url || '').length > maxUrlLength) {
       text(response, 414, 'URI too long');
@@ -1425,7 +1559,7 @@ const handleRequest = async (request, response) => {
     const url = new URL(request.url || '/', 'http://payloader.local');
 
     if (await handlePublicApi(request, response, url)) return;
-    if (await handleAdminApi(request, response, url)) return;
+    if (await handleAdminApi(request, response, url, services)) return;
 
     if (url.pathname === '/favicon.ico') {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -1454,24 +1588,10 @@ const handleRequest = async (request, response) => {
 
     if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
       if (!checkRateLimit(request, response, 'admin-page', adminRequestLimit)) return;
-      if (adminLoginAssetPaths.has(url.pathname)) {
-        await serveStatic(request, response, join(adminDir, url.pathname.slice('/admin/'.length)));
-        return;
-      }
       if (url.pathname === '/admin/login') {
-        if (await isAuthorized(request)) {
-          response.writeHead(302, {
-            ...baseResponseHeaders,
-            location: '/admin',
-            'cache-control': 'no-store',
-          });
-          response.end();
-          return;
-        }
         await serveStatic(request, response, join(adminDir, 'login.html'));
         return;
       }
-      if (!await requireAuth(request, response)) return;
       const adminPath = adminStaticPath(url.pathname);
       if (!adminPath) {
         text(response, 403, 'Forbidden');
@@ -1486,6 +1606,10 @@ const handleRequest = async (request, response) => {
       text(response, 403, 'Forbidden');
       return;
     }
+    if (frontendPath === join(distDir, 'index.html')) {
+      await serveFrontendIndex(request, response, frontendPath);
+      return;
+    }
     await serveStatic(request, response, frontendPath, {
       cacheControl: extname(frontendPath).toLowerCase() === '.html'
         ? 'no-store'
@@ -1497,14 +1621,27 @@ const handleRequest = async (request, response) => {
   }
 };
 
-export const createAdminServer = () => createServer(handleRequest);
+export const createAdminServer = (options = {}) => {
+  const services = {
+    versionChecker: options.versionChecker || applicationVersionChecker,
+  };
+  const server = createServer((request, response) => handleRequest(request, response, services));
+  server.once('close', () => services.versionChecker.stop());
+  return server;
+};
+
+export const __adminSecurityTest = Object.freeze({ clientKey });
 
 export const startAdminServer = async () => {
   await ensureApplicationReady();
   const credentials = await getAdminCredentials();
-  const server = createAdminServer();
+  await applicationVersionChecker.start();
+  const server = createAdminServer({ versionChecker: applicationVersionChecker });
   await new Promise((resolveListen, rejectListen) => {
-    const onError = error => rejectListen(error);
+    const onError = error => {
+      applicationVersionChecker.stop();
+      rejectListen(error);
+    };
     server.once('error', onError);
     server.listen(port, host, () => {
       server.off('error', onError);
@@ -1528,7 +1665,15 @@ const isMainModule = process.platform === 'win32'
   : modulePath === entryPath;
 
 if (isMainModule) {
-  startAdminServer().catch(error => {
+  startAdminServer().then(server => {
+    const shutdown = createShutdownController({ server, closeResources: closeStore });
+    const requestShutdown = signal => shutdown.shutdown(signal).catch(error => {
+      console.error(`Payloader shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    });
+    process.once('SIGINT', () => requestShutdown('SIGINT'));
+    process.once('SIGTERM', () => requestShutdown('SIGTERM'));
+  }).catch(error => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Payloader startup failed: ${message}`);
     process.exitCode = 1;

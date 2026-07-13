@@ -5,7 +5,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => (
 );
 
 const isArray = <T>(value: unknown): T[] => (Array.isArray(value) ? value as T[] : []);
-const projectUrl = 'https://github.com/3516634930/Payloader';
+const publicProjectRoute = '/api/r/p';
 const safeLogoUrlPattern = /^\/uploads\/logo\/logo-[a-zA-Z0-9.-]+\.(png|jpe?g|webp)$/;
 
 const normalizeText = (value: unknown, fallback: SiteSettings['siteTitle']): SiteSettings['siteTitle'] => {
@@ -24,7 +24,8 @@ export const defaultSettings = (): SiteSettings => ({
   browserTitle: { zh: 'Payloader - 渗透测试辅助平台', en: 'Payloader - Pentest Assistance Platform' },
   logoIcon: '⚡',
   logoUrl: '',
-  projectUrl,
+  projectUrl: publicProjectRoute,
+  xeyeEnabled: true,
 });
 
 export const emptyPublicData = (): PublicData => ({
@@ -50,7 +51,8 @@ export const parsePublicData = (value: unknown): PublicData => {
       logoUrl: typeof rawSettings.logoUrl === 'string' && safeLogoUrlPattern.test(rawSettings.logoUrl.trim())
         ? rawSettings.logoUrl.trim()
         : fallback.settings.logoUrl,
-      projectUrl,
+      projectUrl: publicProjectRoute,
+      xeyeEnabled: rawSettings.xeyeEnabled !== false,
     },
     payloads: isArray<PayloadItem>(value.payloads),
     tools: isArray<ToolCommand>(value.tools),

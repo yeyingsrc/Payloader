@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
+import { deflateSync, gzipSync, gunzipSync, inflateSync } from 'node:zlib';
 import ts from 'typescript';
 
 const rootDir = process.cwd();
@@ -40,9 +41,12 @@ const compileEncodingToolsModule = () => {
     Uint8Array,
     URL,
     URLSearchParams,
+    Blob,
+    CompressionStream,
+    DecompressionStream,
     setTimeout,
     clearTimeout,
-    globalThis: {},
+    globalThis: { Blob, CompressionStream, DecompressionStream },
   };
   context.global = context;
   vm.createContext(context);
@@ -140,6 +144,21 @@ await run('smart-decode routes DLP prose to helper', async () => {
   const output = await transform('smart-decode', 'decode', input, defaultParams);
   expect(output.includes('Discrete log / ElGamal analysis'), 'smart-decode did not route to DLP helper');
   expect(output.includes('"recoveredExponent": "13"'), 'smart-decode DLP output missing recovered exponent');
+});
+
+await run('smart-decode routes pure Chinese DLP and ElGamal fields to the helper', async () => {
+  const input = [
+    '离散对数与 ElGamal 题目',
+    '模数：1019',
+    '生成元：2',
+    '公钥：40',
+    '群阶：1018',
+    '密文：(128, 443)',
+  ].join('\n');
+  const output = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(output.includes('Discrete log / ElGamal analysis'), 'smart-decode did not route Chinese DLP fields');
+  expect(output.includes('"recoveredExponent": "13"'), 'smart-decode Chinese DLP output missing recovered exponent');
+  expect(output.includes('"decimal": "42"'), 'smart-decode Chinese ElGamal output missing plaintext');
 });
 
 await run('DLP parameters without curve evidence do not route to ECC', async () => {
@@ -242,6 +261,433 @@ await run('GSM 03.38 rejects a trailing standalone extension escape', async () =
   );
 });
 
+await run('smart-decode strips Chinese ciphertext labels before raw Hex decoding', async () => {
+  const output = await transform('smart-decode', 'decode', '密文（HEX）：666c61677b636e5f6c6162656c7d', defaultParams);
+  expect(output.includes('Hex'), 'smart-decode did not identify the labeled Hex payload');
+  expect(output.includes('flag{cn_label}'), 'smart-decode did not decode the Chinese labeled Hex payload');
+});
+
+await run('smart-decode extracts a labeled raw payload from a multi-line CTF statement', async () => {
+  const input = [
+    '题目：编码练习',
+    '请识别下列字段的格式并还原 flag。',
+    '密文（HEX）：666c61677b6d756c74695f6c696e657d',
+    '提交格式：flag{...}',
+  ].join('\n');
+  const output = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(output.includes('Hex'), 'smart-decode did not extract the multi-line Hex payload');
+  expect(output.includes('flag{multi_line}'), 'smart-decode did not decode the multi-line Hex payload');
+});
+
+await run('smart-decode routes structured token and container formats before generic base decoding', async () => {
+  const jwt = 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJjdGYiLCJyb2xlIjoiYWRtaW4ifQ.';
+  const jwtOutput = await transform('smart-decode', 'decode', jwt, defaultParams);
+  expect(jwtOutput.includes('JWT'), 'smart-decode did not identify a compact JWT');
+  expect(jwtOutput.includes('"role": "admin"'), 'smart-decode JWT output missing payload');
+
+  const jwe = 'eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ.AQID.BAUG.BwgJ.CgsM';
+  const jweOutput = await transform('smart-decode', 'decode', jwe, defaultParams);
+  expect(jweOutput.includes('JWE Compact Serialization'), 'smart-decode did not identify compact JWE');
+
+  const pem = '-----BEGIN DEMO-----\nMAMCAQE=\n-----END DEMO-----';
+  const pemOutput = await transform('smart-decode', 'decode', pem, defaultParams);
+  expect(pemOutput.includes('SEQUENCE'), 'smart-decode did not parse DER inside PEM');
+
+  const dataOutput = await transform('smart-decode', 'decode', 'data:text/plain;base64,ZmxhZ3tkYXRhX3VybH0=', defaultParams);
+  expect(dataOutput.includes('flag{data_url}'), 'smart-decode did not decode Data URL payload');
+
+  const gzipOutput = await transform('smart-decode', 'decode', gzipSync('flag{gzip_smart}').toString('base64'), defaultParams);
+  expect(gzipOutput.includes('flag{gzip_smart}'), 'smart-decode did not decompress Base64 GZip data');
+
+  const basicOutput = await transform('smart-decode', 'decode', 'Basic ZmxhZ3tiYXNpY19hdXRofQ==', defaultParams);
+  expect(basicOutput.includes('flag{basic_auth}'), 'smart-decode did not decode Basic Authorization data');
+
+  const queryOutput = await transform('smart-decode', 'decode', 'https://ctf.example/?mode=decode&tag=one&tag=two', defaultParams);
+  expect(queryOutput.includes('"mode": "decode"'), 'smart-decode did not parse query string data');
+  expect(queryOutput.includes('"tag"'), 'smart-decode query output missing repeated parameter');
+
+  const otpOutput = await transform('smart-decode', 'decode', 'otpauth://hotp/CTF%3Aalice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=CTF&counter=0', defaultParams);
+  expect(otpOutput.includes('"type": "hotp"'), 'smart-decode did not parse otpauth URI');
+  expect(otpOutput.includes('"currentCode": "755224"'), 'smart-decode otpauth output did not calculate HOTP');
+
+  const punycodeOutput = await transform('smart-decode', 'decode', 'xn--bcher-kva.example', defaultParams);
+  expect(punycodeOutput.includes('bücher.example'), 'smart-decode did not decode Punycode host');
+
+  const jwkOutput = await transform('smart-decode', 'decode', JSON.stringify({ kty: 'RSA', kid: 'demo', n: 'AQID', e: 'AQAB' }), defaultParams);
+  expect(jwkOutput.includes('"format": "JWK"'), 'smart-decode did not preserve a JWK as JWK metadata');
+
+  const opaquePemOutput = await transform('smart-decode', 'decode', '-----BEGIN DEMO-----\nZmxhZ3twZW19\n-----END DEMO-----', defaultParams);
+  expect(opaquePemOutput.includes('"label": "DEMO"'), 'smart-decode did not retain a non-ASN.1 PEM container');
+});
+
+await run('Core textual codec vectors decode to their canonical plaintext', async () => {
+  const vectors = [
+    ['url-component', 'flag%7Burl%7D', 'flag{url}'],
+    ['base64', 'ZmxhZ3tiYXNlNjR9', 'flag{base64}'],
+    ['base64url', 'ZmxhZ3tiYXNlNjR1cmx9', 'flag{base64url}'],
+    ['base32', 'MZXW6YTBOI======', 'foobar'],
+    ['base58', 'StV1DL6CwTryKyV', 'hello world'],
+    ['hex', '666c61677b6865787d', 'flag{hex}'],
+    ['binary', '01100110 01101100 01100001 01100111', 'flag'],
+    ['octal-codes', '146 154 141 147', 'flag'],
+    ['ascii-codes', '102 108 97 103', 'flag'],
+    ['a1z26', '6 12 1 7', 'FLAG'],
+    ['morse', '..-. .-.. .- --.', 'FLAG'],
+    ['quoted-printable', 'flag=7Bquoted=5Fprintable=7D', 'flag{quoted_printable}'],
+  ];
+  for (const [operationId, encoded, expected] of vectors) {
+    assert.equal(await transform(operationId, 'decode', encoded, defaultParams), expected, `${operationId} vector mismatch`);
+  }
+});
+
+await run('Web entity codecs and compression containers round-trip text', async () => {
+  assert.equal(await transform('html-entity', 'decode', '&lt;flag&gt;&amp;#x7b;html&amp;#x7d;', defaultParams), '<flag>&#x7b;html&#x7d;');
+  assert.equal(await transform('xml-entity', 'decode', '&lt;flag&gt;&#x7b;xml&#x7d;', defaultParams), '<flag>{xml}');
+  assert.equal(await transform('unicode-escape', 'decode', '\\u0066\\u006c\\u0061\\u0067\\u007bunicode\\u007d', defaultParams), 'flag{unicode}');
+  assert.equal(await transform('utf7', 'decode', '+AGYAbABhAGcAewB1AHQAZgA3AH0-', defaultParams), 'flag{utf7}');
+
+  const zlib = {
+    gzip: { compress: gzipSync, decompress: gunzipSync },
+    deflate: { compress: deflateSync, decompress: inflateSync },
+  };
+  for (const operationId of ['gzip', 'deflate']) {
+    const compressed = await transform(operationId, 'encode', 'flag{compressed}', defaultParams);
+    assert.equal(await transform(operationId, 'decode', compressed, defaultParams), 'flag{compressed}', `${operationId} round trip failed`);
+    assert.equal(zlib[operationId].decompress(Buffer.from(compressed, 'base64')).toString('utf8'), 'flag{compressed}', `${operationId} output is not compatible with Node zlib`);
+    const nodeCompressed = zlib[operationId].compress('flag{node_zlib}').toString('base64');
+    assert.equal(await transform(operationId, 'decode', nodeCompressed, defaultParams), 'flag{node_zlib}', `${operationId} cannot decode Node zlib output`);
+  }
+});
+
+await run('Keyboard shift applies opposite directions for encode and decode', async () => {
+  const encoded = await transform('keyboard-shift', 'encode', 'flag{key}', { ...defaultParams, variant: 'special' });
+  assert.equal(await transform('keyboard-shift', 'decode', encoded, { ...defaultParams, variant: 'special' }), 'flag{key}');
+  assert.equal(encoded, 'g;sh{lru}');
+  assert.equal(await transform('keyboard-shift', 'decode', 'g;sh{lru}', { ...defaultParams, variant: 'special' }), 'flag{key}');
+});
+
+await run('Binary container and telecom parsers match canonical wire samples', async () => {
+  const cbor = JSON.parse(await transform('cbor', 'decode', 'a1616101', defaultParams));
+  assert.equal(cbor.encoding, 'hex');
+  assert.deepEqual(cbor.decoded, { a: 1 });
+
+  const messagePack = JSON.parse(await transform('messagepack', 'decode', '81a16101', defaultParams));
+  assert.equal(messagePack.encoding, 'hex');
+  assert.deepEqual(messagePack.decoded, { a: 1 });
+
+  const protobuf = JSON.parse(await transform('protobuf-raw', 'decode', '089601', defaultParams));
+  assert.equal(protobuf.fields.length, 1);
+  assert.equal(protobuf.fields[0].field, 1);
+  assert.equal(protobuf.fields[0].wireTypeName, 'varint');
+  assert.equal(protobuf.fields[0].value.uint64, '150');
+
+  const bson = JSON.parse(await transform('bson', 'decode', '0c0000001061000100000000', defaultParams));
+  assert.equal(bson.document.a, 1);
+  assert.equal(bson.canonicalEjson.a.$numberInt, '1');
+
+  const submit = JSON.parse(await transform('sms-pdu', 'decode', '0001000B912143658709F1000005E8329BFD06', defaultParams));
+  assert.equal(submit.messageType, 'SMS-SUBMIT');
+  assert.equal(submit.recipient, '+12345678901');
+  assert.equal(submit.userData.text, 'hello');
+});
+
+await run('Base, legacy transport, and text utility codecs preserve standard data', async () => {
+  assert.equal(await transform('base45', 'decode', 'BB8', defaultParams), 'AB');
+  assert.equal(await transform('base58check', 'encode', '0000000000000000000000000000000000000000', { ...defaultParams, versionHex: '00' }), '1111111111111111111114oLvT2');
+  const base58Check = JSON.parse(await transform('base58check', 'decode', '1111111111111111111114oLvT2', defaultParams));
+  assert.equal(base58Check.versionHex, '00');
+  assert.equal(base58Check.payloadHex, '0000000000000000000000000000000000000000');
+  assert.equal(base58Check.checksumValid, true);
+  const bech32 = JSON.parse(await transform('bech32', 'decode', 'A12UEL5L', defaultParams));
+  assert.equal(bech32.hrp, 'a');
+  assert.equal(bech32.variant, 'bech32');
+  assert.equal(bech32.checksumValid, true);
+  assert.equal(await transform('base62', 'decode', await transform('base62', 'encode', 'flag{base62}', defaultParams), defaultParams), 'flag{base62}');
+  assert.equal(await transform('base36', 'decode', await transform('base36', 'encode', 'flag{base36}', defaultParams), defaultParams), 'flag{base36}');
+  assert.equal(await transform('base91', 'decode', await transform('base91', 'encode', 'test', defaultParams), defaultParams), 'test');
+  assert.equal(await transform('ascii85', 'decode', '<~87cURD_*#TDfTZ)+T~>', defaultParams), 'Hello, world!');
+  assert.equal(await transform('ascii85', 'decode', await transform('ascii85', 'encode', 'flag{ascii85}', defaultParams), defaultParams), 'flag{ascii85}');
+  assert.equal(await transform('ascii85', 'decode', await transform('ascii85', 'encode', 'test', { ...defaultParams, variant: 'hex' }), { ...defaultParams, variant: 'hex' }), 'test');
+
+  const uuencoded = await transform('uuencode', 'encode', 'flag{uuencode}', { ...defaultParams, blockLabel: 'demo.txt' });
+  assert.equal(await transform('uuencode', 'decode', uuencoded, defaultParams), 'flag{uuencode}');
+  assert.equal(await transform('yenc', 'decode', await transform('yenc', 'encode', 'flag{yenc}', defaultParams), defaultParams), 'flag{yenc}');
+  assert.equal(await transform('bubble-babble', 'encode', 'Pineapple', defaultParams), 'xigak-nyryk-humil-bosek-sonax');
+  assert.equal(await transform('bubble-babble', 'decode', 'xigak-nyryk-humil-bosek-sonax', defaultParams), 'Pineapple');
+  assert.equal(await transform('utf16-bytes', 'decode', '66006c0061006700', defaultParams), 'flag');
+  assert.equal(await transform('utf16-bytes', 'decode', '0066006c00610067', { ...defaultParams, variant: 'hex' }), 'flag');
+  assert.equal(await transform('reverse-text', 'decode', 'flag{reverse}', defaultParams), '}esrever{galf');
+  assert.equal(await transform('zero-width', 'decode', await transform('zero-width', 'encode', 'flag{zero_width}', defaultParams), defaultParams), 'flag{zero_width}');
+  assert.equal(await transform('url-form', 'decode', 'flag%7Bform+url%7D', defaultParams), 'flag{form url}');
+  assert.equal(await transform('js-string', 'decode', 'flag\\x7Bjs\\x7D', defaultParams), 'flag{js}');
+  assert.equal(await transform('c-string', 'decode', 'flag\\173c\\175', defaultParams), 'flag{c}');
+  assert.equal(await transform('json-string', 'decode', '"flag{json}"', defaultParams), 'flag{json}');
+  const unix = JSON.parse(await transform('unix-time', 'decode', '0', defaultParams));
+  assert.equal(unix.iso, '1970-01-01T00:00:00.000Z');
+});
+
+await run('Numeric and radio codecs round-trip their protocol representations', async () => {
+  assert.equal(await transform('nato-phonetic', 'decode', 'Foxtrot Lima Alfa Golf', defaultParams), 'FLAG');
+  assert.equal(await transform('baudot', 'decode', await transform('baudot', 'encode', 'FLAG 42', defaultParams), defaultParams), 'FLAG 42');
+  assert.equal(await transform('bcd', 'decode', '0001 0010 0011 0100', defaultParams), '1234');
+  assert.equal(await transform('gray-code', 'encode', '10', defaultParams), '11');
+  assert.equal(await transform('gray-code', 'decode', '11', defaultParams), '10');
+  assert.equal(await transform('gray-code', 'encode', '0d10', defaultParams), '15');
+  assert.equal(await transform('gray-code', 'decode', '15', defaultParams), '10');
+  assert.equal(await transform('gray-code', 'decode', '0b1111', defaultParams), '1010');
+  assert.equal(await transform('dna-code', 'decode', await transform('dna-code', 'encode', 'flag{dna}', defaultParams), defaultParams), 'flag{dna}');
+  assert.equal(await transform('rot', 'decode', 'SYNT{ebg13}', defaultParams), 'FLAG{rot13}');
+  assert.equal(await transform('rot8000', 'decode', await transform('rot8000', 'encode', 'flag{rot8000}', defaultParams), defaultParams), 'flag{rot8000}');
+});
+
+await run('Token, identity, and container codecs match standard vectors', async () => {
+  const jwtSecret = 'your-256-bit-secret';
+  const jwt = JSON.parse(await transform('jwt-hmac', 'encode', JSON.stringify({ header: { alg: 'HS256' }, payload: { sub: '1234567890', name: 'John Doe', iat: 1516239022 } }), { ...defaultParams, secret: jwtSecret }));
+  const verified = JSON.parse(await transform('jwt-hmac', 'decode', jwt.token, { ...defaultParams, secret: jwtSecret }));
+  assert.equal(verified.valid, true);
+  assert.equal(verified.payload.name, 'John Doe');
+  const tampered = JSON.parse(await transform('jwt-hmac', 'decode', `${jwt.token.slice(0, -1)}${jwt.token.endsWith('A') ? 'B' : 'A'}`, { ...defaultParams, secret: jwtSecret }));
+  assert.equal(tampered.valid, false);
+
+  const otpSecret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+  const hotp = JSON.parse(await transform('hotp', 'encode', '', { ...defaultParams, secret: otpSecret, counter: '0', digits: '6', hashAlgorithm: 'sha1' }));
+  assert.equal(hotp.code, '755224');
+  const totp = JSON.parse(await transform('totp', 'encode', '', { ...defaultParams, secret: otpSecret, otpTimestamp: '59', timeStep: '30', digits: '8', hashAlgorithm: 'sha1' }));
+  assert.equal(totp.code, '94287082');
+
+  assert.equal(await transform('punycode', 'encode', 'bücher.example', defaultParams), 'xn--bcher-kva.example');
+  assert.equal(await transform('punycode', 'decode', 'xn--bcher-kva.example', defaultParams), 'bücher.example');
+  assert.equal(await transform('basic-auth', 'decode', 'Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==', defaultParams), 'Aladdin:open sesame');
+  assert.equal(await transform('querystring', 'encode', JSON.stringify({ mode: 'decode', tag: ['one', 'two'] }), defaultParams), 'mode=decode&tag=one&tag=two');
+  const query = JSON.parse(await transform('querystring', 'decode', 'https://ctf.example/?mode=decode&tag=one&tag=two', defaultParams));
+  assert.deepEqual(query, { mode: 'decode', tag: ['one', 'two'] });
+
+  const pem = await transform('pem-block', 'encode', 'flag{pem}', { ...defaultParams, blockLabel: 'DEMO' });
+  const pemInfo = JSON.parse(await transform('pem-block', 'decode', pem, defaultParams));
+  assert.equal(pemInfo.label, 'DEMO');
+  assert.equal(pemInfo.textPreview, 'flag{pem}');
+  const asn1 = JSON.parse(await transform('asn1-der', 'decode', '3003020101', defaultParams));
+  assert.equal(asn1.nodes[0].type, 'SEQUENCE');
+  assert.equal(asn1.nodes[0].children[0].value.decimal, '1');
+  const jwk = JSON.parse(await transform('jwk-jwe', 'decode', JSON.stringify({ kty: 'RSA', kid: 'demo', n: 'AQID', e: 'AQAB' }), defaultParams));
+  assert.equal(jwk.format, 'JWK');
+  assert.equal(jwk.key.params.n.bytes, 3);
+  assert.equal(jwk.key.params.e.bytes, 3);
+
+  const fernetKey = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
+  const fernet = await transform('fernet', 'encode', 'flag{fernet}', { ...defaultParams, secret: fernetKey });
+  const fernetDecoded = JSON.parse(await transform('fernet', 'decode', fernet, { ...defaultParams, secret: fernetKey }));
+  assert.equal(fernetDecoded.hmacValid, true);
+  assert.equal(fernetDecoded.plaintext, 'flag{fernet}');
+});
+
+await run('Digest, seed, JWT, and authentication utilities match published contracts', async () => {
+  assert.equal(await transform('hash', 'encode', 'abc', defaultParams), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  assert.equal(await transform('hmac', 'encode', 'The quick brown fox jumps over the lazy dog', { ...defaultParams, secret: 'key' }), 'f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8');
+  const hashInfo = JSON.parse(await transform('hash-identify', 'decode', 'd41d8cd98f00b204e9800998ecf8427e', defaultParams));
+  expect(hashInfo.candidates.includes('MD5'), 'hash identifier did not recognize an MD5-sized digest');
+
+  const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const bip39 = JSON.parse(await transform('bip39-seed', 'encode', mnemonic, { ...defaultParams, secret: 'TREZOR' }));
+  assert.equal(bip39.seedHex, 'c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04');
+
+  const { CompactSign, exportJWK, generateKeyPair } = await import('jose');
+  const { privateKey, publicKey } = await generateKeyPair('ES256');
+  const signed = await new CompactSign(new TextEncoder().encode(JSON.stringify({ sub: 'codec-public-jwt' })))
+    .setProtectedHeader({ alg: 'ES256', typ: 'JWT' })
+    .sign(privateKey);
+  const jwtPublic = JSON.parse(await transform('jwt-public', 'decode', signed, { ...defaultParams, secret: JSON.stringify(await exportJWK(publicKey)) }));
+  assert.equal(jwtPublic.valid, true);
+  assert.equal(jwtPublic.keyMaterialType, 'JWK');
+  assert.equal(jwtPublic.payload.sub, 'codec-public-jwt');
+
+  const otpUri = await transform('otpauth-uri', 'encode', 'CTF:alice', { ...defaultParams, variant: 'hex', secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', counter: '0', digits: '6', hashAlgorithm: 'sha1' });
+  expect(otpUri.startsWith('otpauth://hotp/CTF%3Aalice?'), 'otpauth URI did not encode as HOTP');
+  const otpInfo = JSON.parse(await transform('otpauth-uri', 'decode', otpUri, defaultParams));
+  assert.equal(otpInfo.type, 'hotp');
+  assert.equal(otpInfo.issuer, 'CTF');
+  assert.equal(otpInfo.currentCode, '755224');
+});
+
+await run('Remaining parsing and analysis helpers expose deterministic evidence', async () => {
+  const kwpKek = '5840df6e29b02af1ab493b705bf16ea1ae8338f4dcc176a8';
+  const wrapped = JSON.parse(await transform('aes-kwp', 'encode', 'c37b7e6492584340bed12207808941155068f738', { ...defaultParams, secret: kwpKek }));
+  assert.equal(wrapped.wrappedHex, '138bdeaa9b8fa7fc61f97742e72248ee5ae6ae5360d1ae6a5f54f373fa543b6a');
+  const unwrapped = JSON.parse(await transform('aes-kwp', 'decode', wrapped.wrappedHex, { ...defaultParams, secret: kwpKek }));
+  assert.equal(unwrapped.unwrappedHex, 'c37b7e6492584340bed12207808941155068f738');
+
+  const enigmaSettings = { ...defaultParams, secret: 'rotors=I II III; reflector=B; rings=AAA; positions=AAA' };
+  const enigma = JSON.parse(await transform('enigma', 'encode', 'AAAAA', enigmaSettings));
+  assert.equal(enigma.raw, 'BDZGO');
+  assert.equal(JSON.parse(await transform('enigma', 'decode', enigma.raw, enigmaSettings)).raw, 'AAAAA');
+
+  const brainfuck = await transform('brainfuck', 'encode', 'flag{bf}', defaultParams);
+  assert.equal(JSON.parse(await transform('brainfuck', 'decode', brainfuck, defaultParams)).output, 'flag{bf}');
+  const ook = await transform('ook', 'encode', '+.', defaultParams);
+  assert.equal(await transform('ook', 'decode', ook, defaultParams), '+.');
+  assert.equal((await transform('rot-bruteforce', 'decode', 'SYNT{ebg13}', defaultParams)).includes('ROT13: FLAG{rot13}'), true);
+
+  const singleByteXorCiphertext = '2d272a2c30';
+  const xorCandidates = await transform('xor-bruteforce', 'decode', singleByteXorCiphertext, defaultParams);
+  expect(xorCandidates.includes('0x4b ( 75): flag{'), 'single-byte XOR candidate ranking lost the plaintext');
+  const repeatingXorCiphertext = '2d29382c3e';
+  const xorKnown = JSON.parse(await transform('xor-known-plaintext', 'decode', repeatingXorCiphertext, { ...defaultParams, knownPlaintext: 'flag{' }));
+  assert.equal(xorKnown.candidates[0].keyHexPrefix, '4b45594b45');
+  assert.equal(xorKnown.candidates[0].repeatingKeyGuess.hex, '4b4559');
+  const magic = JSON.parse(await transform('magic-xor-helper', 'decode', repeatingXorCiphertext, { ...defaultParams, knownPlaintext: 'flag{' }));
+  const customMagic = magic.candidates.find(candidate => candidate.signature === 'custom-known-plaintext');
+  assert.equal(customMagic.repeatingKeyGuess.hex, '4b4559');
+
+  const lfsr = JSON.parse(await transform('lfsr-helper', 'decode', 'lfsr keystream = 1011010010110100', defaultParams));
+  assert.equal(lfsr.bitCount, 16);
+  expect(lfsr.linearComplexity > 0, 'LFSR helper did not derive a feedback polynomial');
+  const extension = JSON.parse(await transform('hash-length-extension-helper', 'decode', 'algorithm=sha1\nsignature=0123456789abcdef0123456789abcdef01234567\nmessage=user=guest\nsecret length=8..10', { ...defaultParams, secret: '&admin=true', knownPlaintext: 'user=guest' }));
+  assert.equal(extension.algorithm, 'sha1');
+  assert.deepEqual(extension.secretLengthCandidates, [8, 9, 10]);
+  assert.equal(extension.appendData, '&admin=true');
+  const frequency = JSON.parse(await transform('frequency-analysis', 'decode', 'ABAB', defaultParams));
+  assert.equal(frequency.letterCount, 4);
+  assert.equal(frequency.letters[0].token, 'A');
+  const jsfuck = JSON.parse(await transform('jsfuck-helper', 'decode', 'eval("\\x66\\x6c\\x61\\x67")', defaultParams));
+  assert.equal(jsfuck.extractedQuotedStrings[0], 'flag');
+  const attackGuide = JSON.parse(await transform('crypto-attack-helper', 'decode', 'RSA n=3233 e=17 c=2790 with AES-CBC padding oracle', defaultParams));
+  expect(attackGuide.matched.some(item => item.topic === 'RSA weak-key / textbook RSA'), 'crypto attack helper missed RSA guidance');
+  expect(attackGuide.matched.some(item => item.topic === 'AES mode / oracle'), 'crypto attack helper missed AES oracle guidance');
+
+  const sshString = value => {
+    const data = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    return Buffer.concat([length, data]);
+  };
+  const sshBlob = Buffer.concat([sshString('ssh-ed25519'), sshString(Buffer.alloc(32, 7))]).toString('base64');
+  const ssh = JSON.parse(await transform('ssh-public-key', 'decode', `ssh-ed25519 ${sshBlob} codec@test`, defaultParams));
+  assert.equal(ssh.blobType, 'ssh-ed25519');
+  assert.equal(ssh.comment, 'codec@test');
+  assert.equal(ssh.fields.publicKey.bytes, 32);
+
+  const dataUrl = await transform('data-url', 'encode', 'flag{data_url_direct}', defaultParams);
+  assert.equal(await transform('data-url', 'decode', dataUrl, defaultParams), 'flag{data_url_direct}');
+});
+
+await run('AES raw modes match Node crypto reference ciphertexts', async () => {
+  const keyHex = '00112233445566778899aabbccddeeff';
+  const ivHex = '0102030405060708090a0b0c0d0e0f10';
+  const plaintext = 'flag{aes_vector}';
+  const params = { ...defaultParams, secret: keyHex, iv: ivHex, variant: 'special' };
+  const vectors = [
+    ['aes-cbc-raw', 'aes-128-cbc', Buffer.from(ivHex, 'hex')],
+    ['aes-ctr-raw', 'aes-128-ctr', Buffer.from(ivHex, 'hex')],
+    ['aes-cfb', 'aes-128-cfb', Buffer.from(ivHex, 'hex')],
+    ['aes-ofb', 'aes-128-ofb', Buffer.from(ivHex, 'hex')],
+    ['aes-ecb', 'aes-128-ecb', null],
+  ];
+  for (const [operationId, nodeCipher, iv] of vectors) {
+    const cipher = crypto.createCipheriv(nodeCipher, Buffer.from(keyHex, 'hex'), iv);
+    const expectedHex = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]).toString('hex');
+    const encoded = JSON.parse(await transform(operationId, 'encode', plaintext, params));
+    assert.equal(encoded.ciphertextHex, expectedHex, `${operationId} ciphertext differs from Node crypto`);
+    assert.equal(await transform(operationId, 'decode', expectedHex, params), plaintext, `${operationId} failed to decrypt Node crypto ciphertext`);
+  }
+});
+
+await run('Symmetric cipher families encrypt and decrypt their own interoperable payloads', async () => {
+  const plaintext = 'flag{symmetric_family}';
+  const hex = (bytes) => '00'.repeat(bytes);
+  const fixtures = [
+    ['aes-gcm', { secret: 'codec-passphrase' }],
+    ['aes-cbc', { secret: 'codec-passphrase' }],
+    ['aes-ctr', { secret: 'codec-passphrase' }],
+    ['openssl-aes-256-cbc', { secret: 'codec-passphrase' }],
+    ['des', { secret: '0123456789abcdef', iv: 'abcdef0123456789' }],
+    ['triple-des', { secret: '0123456789abcdef23456789abcdef01456789abcdef0123', iv: 'abcdef0123456789' }],
+    ['blowfish', { secret: '00112233445566778899aabbccddeeff', iv: '0102030405060708' }],
+    ['rabbit', { secret: '00112233445566778899aabbccddeeff', iv: '0102030405060708' }],
+    ['chacha20-orig', { secret: hex(32), iv: hex(8) }],
+    ['chacha20', { secret: hex(32), iv: hex(12) }],
+    ['xchacha20', { secret: hex(32), iv: hex(24) }],
+    ['salsa20', { secret: hex(16), iv: hex(8) }],
+    ['xsalsa20', { secret: hex(32), iv: hex(24) }],
+    ['chacha20-poly1305', { secret: hex(32), iv: hex(12), associatedData: 'ctf-aad' }],
+    ['xchacha20-poly1305', { secret: hex(32), iv: hex(24), associatedData: 'ctf-aad' }],
+    ['xsalsa20-poly1305', { secret: hex(32), iv: hex(24) }],
+    ['aes-gcm-siv', { secret: hex(16), iv: hex(12), associatedData: 'ctf-aad' }],
+    ['aes-siv', { secret: hex(32), associatedData: 'ctf-aad' }],
+    ['sm4', { secret: hex(16), iv: hex(16) }],
+    ['rc4', { secret: 'Key' }],
+    ['rc4-drop', { secret: 'Key', dropBytes: '768' }],
+    ['tea', { secret: '00112233445566778899aabbccddeeff' }],
+    ['xtea', { secret: '00112233445566778899aabbccddeeff' }],
+    ['xxtea', { secret: '00112233445566778899aabbccddeeff' }],
+  ];
+  for (const [operationId, overrides] of fixtures) {
+    const params = { ...defaultParams, ...overrides, variant: 'special' };
+    const encrypted = await transform(operationId, 'encode', plaintext, params);
+    const decrypted = await transform(operationId, 'decode', encrypted, params);
+    const recovered = operationId === 'openssl-aes-256-cbc' ? JSON.parse(decrypted).plaintext : decrypted;
+    assert.equal(recovered, plaintext, `${operationId} round trip failed`);
+  }
+});
+
+await run('Published AES-KW, AES-CMAC, RC4, and Rabin vectors are correct', async () => {
+  const kek = '000102030405060708090a0b0c0d0e0f';
+  const keyData = '00112233445566778899aabbccddeeff';
+  const wrapped = JSON.parse(await transform('aes-kw', 'encode', keyData, { ...defaultParams, secret: kek }));
+  assert.equal(wrapped.wrappedHex, '1fa68b0a8112b447aeF34bd8fb5a7b829d3e862371d2cfe5'.toLowerCase());
+  const unwrapped = JSON.parse(await transform('aes-kw', 'decode', wrapped.wrappedHex, { ...defaultParams, secret: kek }));
+  assert.equal(unwrapped.unwrappedHex, keyData);
+
+  const cmac = JSON.parse(await transform(
+    'aes-cmac',
+    'decode',
+    '6bc1bee22e409f96e93d7e117393172a',
+    { ...defaultParams, secret: '2b7e151628aed2a6abf7158809cf4f3c' },
+  ));
+  assert.equal(cmac.tagHex, '070a16b46b4d4144f79bdd9dd04a287c');
+
+  assert.equal(await transform('rc4', 'encode', 'Plaintext', { ...defaultParams, secret: 'Key' }), 'bbf316e8d940af0ad3');
+  assert.equal(await transform('rc4', 'decode', 'bbf316e8d940af0ad3', { ...defaultParams, secret: 'Key' }), 'Plaintext');
+
+  const rabinEncrypted = JSON.parse(await transform('rabin-raw', 'encode', 'p = 7\nq = 11\nm = 20', defaultParams));
+  assert.equal(rabinEncrypted.output.decimal, '15');
+  const rabinDecrypted = JSON.parse(await transform('rabin-raw', 'decode', 'p = 7\nq = 11\nc = 15', defaultParams));
+  expect(rabinDecrypted.output.candidates.some(candidate => candidate.decimal === '20'), 'Rabin roots are missing the original plaintext');
+});
+
+await run('Classical cipher vectors and reversible paths preserve expected plaintext', async () => {
+  assert.equal(await transform('vigenere', 'encode', 'ATTACKATDAWN', { ...defaultParams, secret: 'LEMON' }), 'LXFOPVEFRNHR');
+  assert.equal(await transform('vigenere', 'decode', 'LXFOPVEFRNHR', { ...defaultParams, secret: 'LEMON' }), 'ATTACKATDAWN');
+  assert.equal(await transform('affine', 'decode', 'IHHWVCSWFRCP', { ...defaultParams, affineA: '5', affineB: '8' }), 'AFFINECIPHER');
+  assert.equal(await transform('rail-fence', 'decode', 'WECRLTEERDSOEEFEAOCAIVDEN', { ...defaultParams, rails: '3' }), 'WEAREDISCOVEREDFLEEATONCE');
+
+  const fixtures = [
+    ['beaufort', 'FLAG{BEAUFORT}', { secret: 'LEMON' }],
+    ['autokey', 'ATTACKATDAWN', { secret: 'QUEENLY' }],
+    ['atbash', 'FLAG{ATBASH}', {}],
+    ['bacon', 'FLAG', {}],
+    ['polybius', 'FLAG', {}],
+    ['tap-code', 'FLAG', {}],
+    ['playfair', 'INSTRUMENTS', { secret: 'MONARCHY' }, 'INSTRUMENTSX'],
+    ['hill2', 'HELP', { secret: '3 3 2 5' }],
+    ['substitution', 'FLAG{SUB}', { secret: 'ZYXWVUTSRQPONMLKJIHGFEDCBA' }],
+    ['scytale', 'FLAG{SCYTALE}', { rails: '4' }],
+    ['columnar', 'FLAG{COLUMNAR}', { secret: 'ZEBRAS' }],
+    ['porta', 'FLAG{PORTA}', { secret: 'LEMON' }],
+    ['gronsfeld', 'FLAG{GRONSFELD}', { secret: '31415' }],
+    ['bifid', 'FLAG', { secret: 'KEYWORD', period: '5' }],
+    ['trifid', 'FLAG', { secret: 'KEYWORD', period: '5' }],
+    ['four-square', 'FLAG', { secret: 'EXAMPLE', keyword2: 'KEYWORD' }],
+    ['nihilist', 'FLAG', { secret: 'KEYWORD' }],
+    ['adfgx', 'FLAG', { secret: 'KEYWORD', keyword2: 'CIPHER' }],
+    ['adfgvx', 'FLAG42', { secret: 'KEYWORD', keyword2: 'CIPHER' }],
+  ];
+  for (const [operationId, plaintext, overrides, expected = plaintext] of fixtures) {
+    const params = { ...defaultParams, ...overrides };
+    const encrypted = await transform(operationId, 'encode', plaintext, params);
+    assert.equal(await transform(operationId, 'decode', encrypted, params), expected, `${operationId} round trip failed`);
+  }
+});
+
 await run('ChaCha20 original is discoverable in crypto operations', async () => {
   const operation = operations.find(item => item.id === 'chacha20-orig');
   expect(operation, 'chacha20-orig is missing from operations');
@@ -274,6 +720,53 @@ await run('smart-decode routes messy RSA labels to raw RSA decrypt', async () =>
   const output = await transform('smart-decode', 'decode', input, defaultParams);
   expect(output.includes('RSA Raw / Textbook'), 'smart-decode did not route messy RSA labels');
   expect(output.includes('"decimal": "65"'), 'smart-decode RSA output missing plaintext');
+});
+
+await run('RSA accepts Chinese full labels, mixed case aliases, and fullwidth separators', async () => {
+  const input = [
+    '模数（N）：3233',
+    '公钥指数（e）＝17',
+    '密文（Cipher_Text）：2790',
+    '质数 P：61',
+    '质数 q：53',
+  ].join('\n');
+  const direct = JSON.parse(await transform('rsa-raw', 'decode', input, defaultParams));
+  assert.equal(direct.output.decimal, '65');
+
+  const smart = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(smart.includes('RSA Raw / Textbook'), 'smart-decode did not route Chinese RSA labels');
+  expect(smart.includes('"decimal": "65"'), 'smart-decode Chinese RSA output missing plaintext');
+});
+
+await run('RSA accepts pure Chinese parameter names without English aliases', async () => {
+  const input = [
+    '模数：3233',
+    '公钥指数：17',
+    '密文：2790',
+    '第一质数：61',
+    '第二质数：53',
+  ].join('\n');
+  const direct = JSON.parse(await transform('rsa-raw', 'decode', input, defaultParams));
+  assert.equal(direct.output.decimal, '65');
+
+  const smart = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(smart.includes('RSA Raw / Textbook'), 'smart-decode did not route pure Chinese RSA labels');
+  expect(smart.includes('"decimal": "65"'), 'smart-decode pure Chinese RSA output missing plaintext');
+});
+
+await run('smart-decode keeps Chinese RSA analysis ahead of embedded Base64-looking data', async () => {
+  const input = [
+    '加密算法：RSA',
+    '提示：附件名为 ZmxhZ3tub3Rfcm91dGVkfQ==，不要把它当作待解密密文。',
+    '模数：3233',
+    '公钥指数：17',
+    '密文：2790',
+    '第一质数：61',
+    '第二质数：53',
+  ].join('\n');
+  const output = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(output.includes('RSA Raw / Textbook'), 'smart-decode extracted an unrelated Base64-looking field before RSA');
+  expect(output.includes('"decimal": "65"'), 'smart-decode RSA result missing after embedded Base64-looking data');
 });
 
 await run('Pollard Rho path factors n from n/e/c only', async () => {
@@ -915,6 +1408,29 @@ await run('ECDSA nonce reuse works for prose sig1/sig2 format', async () => {
   expect(output.includes(`"privateKey": "${privateKey}"`), 'ECDSA prose sig1/sig2 did not recover private key');
 });
 
+await run('smart-decode routes Chinese repeated-nonce signature fields and recovers the key', async () => {
+  const order = 101n;
+  const privateKey = 11n;
+  const nonce = 13n;
+  const r = 17n;
+  const z1 = 33n;
+  const z2 = 44n;
+  const nonceInverse = modInverse(nonce, order);
+  const s1 = (nonceInverse * ((z1 + r * privateKey) % order)) % order;
+  const s2 = (nonceInverse * ((z2 + r * privateKey) % order)) % order;
+  const input = [
+    'ECDSA 重复随机数题',
+    `曲线阶：${order}`,
+    `签名1：(${r}, ${s1})`,
+    `哈希1：${z1}`,
+    `签名2：(${r}, ${s2})`,
+    `哈希2：${z2}`,
+  ].join('\n');
+  const output = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(output.includes('Signature nonce reuse'), 'smart-decode did not route Chinese repeated-nonce signature fields');
+  expect(output.includes(`"privateKey": "${privateKey}"`), 'smart-decode Chinese signature fields did not recover private key');
+});
+
 await run('ECDSA nonce reuse derives z from msg1/msg2 and algorithm', async () => {
   const order = 101n;
   const privateKey = 11n;
@@ -1145,6 +1661,21 @@ await run('LCG indexed x[0]/x[1] states are parsed and solved', async () => {
   assert.equal(output.next, '56');
 });
 
+await run('smart-decode routes Chinese LCG parameter names and output list', async () => {
+  const input = [
+    '线性同余生成器随机数题',
+    '模数：97',
+    '乘数：5',
+    '增量：7',
+    '输出序列：[12, 67, 51, 68]',
+  ].join('\n');
+  const output = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(output.includes('LCG / PRNG analysis'), 'smart-decode did not route Chinese LCG fields');
+  expect(output.includes('"a": "5"'), 'smart-decode Chinese LCG multiplier missing');
+  expect(output.includes('"c": "7"'), 'smart-decode Chinese LCG increment missing');
+  expect(output.includes('"next": "56"'), 'smart-decode Chinese LCG prediction missing');
+});
+
 await run('MT19937 output0/output1 numbered fields are cloned', async () => {
   const outputs = Array.from({ length: 624 }, (_, index) => BigInt(index));
   const lines = outputs.map((value, index) => `output${index} = ${value.toString()}`);
@@ -1348,6 +1879,21 @@ await run('Smart symmetric decrypt recognizes Python AES-CBC snippet with b64dec
   const output = await transform('smart-decode', 'decode', input, defaultParams);
   expect(output.includes('aes-cbc-raw'), 'Python AES-CBC snippet was not routed to smart symmetric decrypt');
   expect(output.includes('flag{aes_cbc_demo}'), 'Python AES-CBC snippet did not recover plaintext');
+});
+
+await run('Smart symmetric decrypt accepts Chinese AES labels, fullwidth colon, and key aliases', async () => {
+  const input = [
+    '加密算法（AES-128-CBC）：AES-128-CBC',
+    '密钥（Hex）：30313233343536373839616263646566',
+    '初始向量（Hex）：61626364656630313233343536373839',
+    '密文（Base64）：w8i4Hzr1Ib9t3H0Rr8Hp2irQ6l3xuuOY9inE+HTzS3o=',
+  ].join('\n');
+  const direct = await transform('aes-cbc-raw', 'decode', input, defaultParams);
+  assert.equal(direct, 'flag{aes_cbc_demo}');
+
+  const smart = await transform('smart-decode', 'decode', input, defaultParams);
+  expect(smart.includes('aes-cbc-raw'), 'smart-decode did not route Chinese AES labels');
+  expect(smart.includes('flag{aes_cbc_demo}'), 'smart-decode Chinese AES output missing plaintext');
 });
 
 await run('Smart symmetric decrypt recognizes Python AES-GCM decrypt_and_verify snippet', async () => {

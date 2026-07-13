@@ -6,6 +6,17 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getPublicData } from './data-store.mjs';
+import {
+  CLIENT_BUILD_CONTRACT_VERSION,
+  writeClientDeploymentPackage,
+} from './client-deployment-package.mjs';
+import {
+  acquireClientShellArchive,
+  assembleClientShell,
+  loadClientShellCatalog,
+  validateClientShellManifest,
+} from './client-shells.mjs';
+import { clientProjectRoute, officialProjectUrl, publicProjectRoute } from './project-attribution.mjs';
 
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const serverDir = join(rootDir, 'server');
@@ -23,7 +34,10 @@ const clientCacheRoot = process.env.PAYLOADER_CLIENT_CACHE_DIR
   : join(buildRoot, '.builder-cache');
 const latestFile = join(buildRoot, 'latest.json');
 const lastFailureFile = join(buildRoot, 'last-failure.json');
+const clientShellCatalogFile = join(clientCacheRoot, 'shell-catalog.json');
 const electronMainTemplate = join(serverDir, 'client-electron-main.cjs');
+const clientDeploymentRuntimeSource = join(serverDir, 'client-deployment-runtime.cjs');
+const projectAttributionSource = join(serverDir, 'project-attribution.cjs');
 const clientBuilderSource = join(serverDir, 'client-builder.mjs');
 const projectPackageJson = join(rootDir, 'package.json');
 const tscCli = join(rootDir, 'node_modules', 'typescript', 'bin', 'tsc');
@@ -34,17 +48,17 @@ const immutableProductionRuntime = process.env.NODE_ENV === 'production';
 const productName = 'Payloader';
 const copyright = 'Copyright (c) Payloader';
 const pathSeparator = sep;
-const officialProjectUrl = 'https://github.com/3516634930/Payloader';
-const decodeProtectedText = values => String.fromCharCode(...values);
-const protectedXeyeUrl = decodeProtectedText([104, 116, 116, 112, 115, 58, 47, 47, 120, 115, 115, 46, 105, 99, 117, 47]);
-const protectedXssToolId = decodeProtectedText([120, 115, 115, 45, 112, 108, 97, 116, 102, 111, 114, 109]);
-const defaultElectronMirror = process.env.PAYLOADER_ELECTRON_MIRROR || process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/';
-const defaultBuilderBinariesMirror = process.env.PAYLOADER_ELECTRON_BUILDER_BINARIES_MIRROR
+const protectedXeyeUrl = 'https://xss.icu/';
+const protectedXssToolId = 'xss-platform';
+const configuredElectronMirror = String(process.env.PAYLOADER_ELECTRON_MIRROR || process.env.ELECTRON_MIRROR || '').trim();
+const configuredBuilderBinariesMirror = String(process.env.PAYLOADER_ELECTRON_BUILDER_BINARIES_MIRROR
   || process.env.ELECTRON_BUILDER_BINARIES_MIRROR
-  || 'https://npmmirror.com/mirrors/electron-builder-binaries/';
+  || '').trim();
+const configuredClientShellDirectory = String(process.env.PAYLOADER_CLIENT_SHELL_DIR || '').trim();
+const remoteClientShellsDisabled = process.env.PAYLOADER_CLIENT_SHELLS_REMOTE_DISABLED === 'true';
 const clientRuntime = 'electron-offline-client';
 const clientDistribution = 'multi-platform-desktop-client';
-const clientBuildContractVersion = 4;
+const clientBuildContractVersion = CLIENT_BUILD_CONTRACT_VERSION;
 const clientMetadataVersion = 3;
 const configuredFreshnessCacheTtlMs = Number(process.env.PAYLOADER_CLIENT_FRESHNESS_CACHE_MS);
 const freshnessCacheTtlMs = Number.isFinite(configuredFreshnessCacheTtlMs)
@@ -54,19 +68,46 @@ const clientNetworkPolicy = Object.freeze({
   offline: true,
   internalOrigin: 'payloader://app',
   blockedSchemes: ['http:', 'https:', 'ws:', 'wss:', 'file:', 'ftp:', 'data:', 'blob:'],
-  allowedExternalLinks: [officialProjectUrl, protectedXeyeUrl],
+  allowedExternalLinks: [clientProjectRoute, protectedXeyeUrl],
   note: 'The packaged client serves a static public snapshot from payloader://app and blocks renderer network requests. Only fixed user-click external links may be opened by the OS browser.',
 });
 const clientPerformancePolicy = Object.freeze({
   lazyPublicDataSnapshot: true,
+  streamsPublicDataSnapshot: true,
+  boundsMainProcessAssetCache: true,
+  backgroundThrottling: true,
+  singleInstance: true,
   skipsPackagedBuildPolling: true,
   streamingArtifactHashes: true,
+  windows: Object.freeze({
+    windowReadyMs: 1500,
+    searchSettledMs: 300,
+    idleWorkingSetMb: 500,
+    interactionWorkingSetMb: 550,
+    privateMemoryMb: 440,
+    privateMemoryGrowthMb: 80,
+    idleCpuPercentOneCore: 2,
+  }),
+  linux: Object.freeze({
+    windowReadyMs: 2500,
+    searchSettledMs: 350,
+    idleWorkingSetMb: 600,
+    interactionWorkingSetMb: 675,
+    idleCpuPercentOneCore: 5,
+  }),
+  macos: Object.freeze({
+    windowReadyMs: 2500,
+    searchSettledMs: 350,
+    idleWorkingSetMb: 600,
+    interactionWorkingSetMb: 675,
+    idleCpuPercentOneCore: 5,
+  }),
   packageCompression: 'normal',
   appImageCompression: 'gzip',
   debCompression: 'gz',
   rpmCompression: 'gzip',
   runInstallerLaunchAfterFinish: false,
-  note: 'The desktop client opens its shell before parsing the public data snapshot, skips build-status polling when packaged, serves cached static assets, uses faster package compression, and streams artifact hashing to avoid loading installers into memory.',
+  note: 'The desktop client streams large snapshots and static assets instead of retaining duplicate buffers in the main process, throttles background rendering, prevents duplicate instances, skips packaged build polling, and streams artifact hashing.',
 });
 const clientSecurityPolicy = Object.freeze({
   noAutoStart: true,
@@ -75,7 +116,7 @@ const clientSecurityPolicy = Object.freeze({
   noShellInjection: true,
   codeSigningRecommended: true,
   integrityHashes: true,
-  note: 'False-positive reduction is handled through code signing, stable metadata, transparent SHA256 hashes, least privilege, and a locked offline network policy. The builder does not add packing, obfuscation, security-software evasion, injection, or stealth behavior.',
+  note: 'False-positive reduction is handled through code signing, stable metadata, transparent artifact hashes, least privilege, and a locked offline network policy. Project attribution uses a narrow authenticated-encryption module; executable packing, security-software evasion, injection, and stealth behavior are not added.',
 });
 const crossPlatformOverride = process.env.PAYLOADER_CLIENT_FORCE_CROSS_PLATFORM === 'true';
 const clientTargetMatrix = Object.freeze([
@@ -366,6 +407,7 @@ const downloadMimeTypes = {
   '.appimage': 'application/octet-stream',
   '.dmg': 'application/x-apple-diskimage',
   '.zip': 'application/zip',
+  '.gz': 'application/gzip',
   '.deb': 'application/vnd.debian.binary-package',
   '.rpm': 'application/x-rpm',
 };
@@ -373,6 +415,8 @@ const downloadMimeTypes = {
 let currentJob = null;
 let freshnessCache = null;
 let freshnessHashProvider = null;
+let shellCatalogCache = null;
+let shellCatalogProvider = null;
 
 const now = () => new Date().toISOString();
 const hashValue = value => createHash('sha256').update(value).digest('hex');
@@ -397,45 +441,52 @@ const isInside = (baseDir, target) => {
   return fromBase && fromBase !== '..' && !fromBase.startsWith(`..${pathSeparator}`) && !isAbsolute(fromBase);
 };
 
-const normalizeTargetAvailability = target => {
-  const supported = crossPlatformOverride || target.hostPlatforms.includes(process.platform);
+const shellTarget = (catalog, target) => catalog?.targets?.[target.id] || null;
+
+const normalizeTargetAvailability = (target, catalog = null) => {
+  const shell = shellTarget(catalog, target);
+  const nativeSupported = crossPlatformOverride || target.hostPlatforms.includes(process.platform);
+  const supported = Boolean(shell) || nativeSupported;
   let reason = '';
   if (!supported) {
-    if (target.platform === 'macos') {
-      reason = 'macOS clients must be generated on a macOS build host or macOS CI runner so signing and notarization can be completed honestly.';
-    } else if (target.platform === 'linux') {
-      reason = 'Linux clients should be generated on a Linux build host or dedicated Linux CI image with the matching packaging toolchain.';
-    } else {
-      reason = 'This target is not supported on the current build host.';
-    }
+    reason = catalog?.error ? '官方壳不可用' : '缺少兼容壳或本机工具链';
   }
+  const portable = shell
+    ? shell.outputFormat === 'zip'
+      ? { format: 'Portable ZIP', extension: '.zip', installType: 'Portable directory', mimeType: 'application/zip' }
+      : { format: 'Portable TAR.GZ', extension: '.tar.gz', installType: 'Portable directory', mimeType: 'application/gzip' }
+    : null;
   return {
     id: target.id,
     platform: target.platform,
     platformLabel: target.platformLabel,
     arch: target.arch,
     archLabel: target.archLabel,
-    format: target.format,
-    extension: target.extension,
+    format: portable?.format || target.format,
+    extension: portable?.extension || target.extension,
     recommended: target.recommended,
     supported,
     selectedByDefault: supported && target.recommended !== false,
     reason,
+    source: shell ? 'official-shell' : nativeSupported ? 'native-host' : 'unavailable',
+    shellVersion: shell ? String(catalog?.manifest?.appVersion || '') : '',
+    shellSigned: shell ? Boolean(shell.signed) : false,
     cpuFamily: target.cpuFamily || target.archLabel,
     minOsVersion: target.minOsVersion || '',
-    installType: target.installType || target.format,
-    packageManager: target.packageManager || '',
+    installType: portable?.installType || target.installType || target.format,
+    packageManager: portable ? '' : target.packageManager || '',
+    mimeType: portable?.mimeType || target.mimeType,
     requiresSigningNote: target.requiresSigningNote || '',
   };
 };
 
-const defaultTargetIds = () => clientTargetMatrix
-  .filter(target => (crossPlatformOverride || target.hostPlatforms.includes(process.platform)) && target.recommended !== false)
+const defaultTargetIds = catalog => clientTargetMatrix
+  .filter(target => normalizeTargetAvailability(target, catalog).supported && target.recommended !== false)
   .map(target => target.id);
 
-const normalizeRequestedTargets = value => {
+const normalizeRequestedTargets = (value, catalog = null) => {
   const requested = Array.isArray(value) ? value.map(item => String(item || '').trim()) : [];
-  const ids = requested.length ? requested : defaultTargetIds();
+  const ids = requested.length ? requested : defaultTargetIds(catalog);
   const seen = new Set();
   const selected = [];
   const skipped = [];
@@ -447,11 +498,11 @@ const normalizeRequestedTargets = value => {
       skipped.push({ id, status: 'unsupported', reason: 'Unknown client target.' });
       continue;
     }
-    if (!crossPlatformOverride && !target.hostPlatforms.includes(process.platform)) {
+    if (!normalizeTargetAvailability(target, catalog).supported) {
       skipped.push({
         id,
         status: 'unsupported',
-        reason: normalizeTargetAvailability(target).reason,
+        reason: normalizeTargetAvailability(target, catalog).reason,
       });
       continue;
     }
@@ -488,10 +539,74 @@ const writeJsonFile = async (filePath, value) => {
   }
 };
 
+const unavailableShellCatalog = error => ({
+  source: 'unavailable',
+  manifest: null,
+  targets: {},
+  error: error instanceof Error ? error.message : String(error || 'Official client shells are unavailable.'),
+});
+
+const readCachedShellCatalog = async () => {
+  const cached = await readJsonFile(clientShellCatalogFile, null);
+  if (!cached?.catalog?.manifest || !cached?.catalog?.targets) return null;
+  try {
+    const packageInfo = await readJsonFile(projectPackageJson, {});
+    validateClientShellManifest(cached.catalog.manifest, {
+      buildContractVersion: clientBuildContractVersion,
+      appVersion: packageInfo.version,
+    });
+    return {
+      ...cached.catalog,
+      source: 'github-release-cache',
+      cachedAt: cached.cachedAt || '',
+    };
+  } catch {
+    return null;
+  }
+};
+
+const loadShellCatalog = async (options = {}) => {
+  if (shellCatalogProvider) return shellCatalogProvider();
+  const currentTime = Date.now();
+  if (!options.force && shellCatalogCache?.expiresAt > currentTime) return shellCatalogCache.promise;
+  const promise = (async () => {
+    if (remoteClientShellsDisabled && !configuredClientShellDirectory) {
+      return unavailableShellCatalog('Official client shell checks are disabled.');
+    }
+    try {
+      const packageInfo = await readJsonFile(projectPackageJson, {});
+      const catalog = await loadClientShellCatalog({
+        localDirectory: configuredClientShellDirectory,
+        repositoryUrl: officialProjectUrl,
+        token: process.env.PAYLOADER_GITHUB_TOKEN,
+        timeoutMs: 8_000,
+        buildContractVersion: clientBuildContractVersion,
+        appVersion: packageInfo.version,
+      });
+      if (catalog.source === 'github-release') {
+        await writeJsonFile(clientShellCatalogFile, { cachedAt: now(), catalog });
+      }
+      return catalog;
+    } catch (error) {
+      const cached = configuredClientShellDirectory ? null : await readCachedShellCatalog();
+      return cached ? { ...cached, error: error.message } : unavailableShellCatalog(error);
+    }
+  })();
+  shellCatalogCache = {
+    promise,
+    expiresAt: currentTime + (configuredClientShellDirectory ? 60_000 : 5 * 60_000),
+  };
+  return promise;
+};
+
 const artifactPlatformPrefix = target => target.platform === 'macos' ? 'mac' : target.platform === 'windows' ? 'win' : target.platform;
 
 const artifactFileName = (target, stamp, buildId) => (
   `Payloader-Client-${stamp}-${buildId.slice(0, 8)}-${artifactPlatformPrefix(target)}-${target.arch}-${target.builderTargets[0].toLowerCase()}${target.extension}`
+);
+
+const portableArtifactFileName = (target, shell, stamp, buildId) => (
+  `Payloader-Client-${stamp}-${buildId.slice(0, 8)}-${artifactPlatformPrefix(target)}-${target.arch}-portable${shell.outputFormat === 'zip' ? '.zip' : '.tar.gz'}`
 );
 
 const artifactScore = item => {
@@ -545,6 +660,9 @@ const normalizeArtifact = item => {
     minOsVersion: item.minOsVersion || target.minOsVersion || '',
     installType: item.installType || target.installType || item.format || '',
     packageManager: item.packageManager || target.packageManager || '',
+    buildSource: item.buildSource || 'native-host',
+    shellVersion: item.shellVersion || '',
+    shellSha256: item.shellSha256 || '',
     performanceNotes: Array.isArray(item.performanceNotes) ? item.performanceNotes : [],
     securityNotes: Array.isArray(item.securityNotes) ? item.securityNotes : [],
     notes: Array.isArray(item.notes) ? item.notes : [],
@@ -755,25 +873,27 @@ const artifactExists = async item => {
   return Boolean(stats?.isFile());
 };
 
-const metadataHasRequestedArtifacts = async (metadata, targets) => {
+const metadataHasRequestedArtifacts = async (metadata, targets, catalog = null) => {
   const normalized = normalizeMetadata(metadata);
   if (!normalized?.items?.length) return false;
   for (const target of targets) {
     const item = normalized.items.find(candidate => candidate.targetId === target.id);
+    const expectedSource = shellTarget(catalog, target) ? 'official-shell' : 'native-host';
+    if (item?.buildSource !== expectedSource) return false;
     if (!item || !await artifactExists(item)) return false;
   }
   return true;
 };
 
-const codeSigningSettings = () => {
-  const cscLink = process.env.PAYLOADER_WINDOWS_CSC_LINK || process.env.PAYLOADER_CSC_LINK || process.env.WIN_CSC_LINK || process.env.CSC_LINK || '';
-  const cscKeyPassword = process.env.PAYLOADER_WINDOWS_CSC_KEY_PASSWORD
-    || process.env.PAYLOADER_CSC_KEY_PASSWORD
-    || process.env.WIN_CSC_KEY_PASSWORD
-    || process.env.CSC_KEY_PASSWORD
+const codeSigningSettings = (sourceEnv = process.env) => {
+  const cscLink = sourceEnv.PAYLOADER_WINDOWS_CSC_LINK || sourceEnv.PAYLOADER_CSC_LINK || sourceEnv.WIN_CSC_LINK || sourceEnv.CSC_LINK || '';
+  const cscKeyPassword = sourceEnv.PAYLOADER_WINDOWS_CSC_KEY_PASSWORD
+    || sourceEnv.PAYLOADER_CSC_KEY_PASSWORD
+    || sourceEnv.WIN_CSC_KEY_PASSWORD
+    || sourceEnv.CSC_KEY_PASSWORD
     || '';
-  const certificateSubjectName = process.env.PAYLOADER_WINDOWS_CERT_SUBJECT || process.env.WIN_CSC_NAME || process.env.CSC_NAME || '';
-  const certificateSha1 = process.env.PAYLOADER_WINDOWS_CERT_SHA1 || process.env.WIN_CSC_SHA1 || '';
+  const certificateSubjectName = sourceEnv.PAYLOADER_WINDOWS_CERT_SUBJECT || sourceEnv.WIN_CSC_NAME || sourceEnv.CSC_NAME || '';
+  const certificateSha1 = sourceEnv.PAYLOADER_WINDOWS_CERT_SHA1 || sourceEnv.WIN_CSC_SHA1 || '';
   const configured = Boolean(cscLink || certificateSubjectName || certificateSha1);
   const signtoolOptions = {
     ...(certificateSubjectName ? { certificateSubjectName } : {}),
@@ -787,6 +907,59 @@ const codeSigningSettings = () => {
     },
     winConfig: Object.keys(signtoolOptions).length ? { signtoolOptions } : {},
   };
+};
+
+const buildEnvironmentAllowlist = Object.freeze([
+  'PATH', 'Path',
+  'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR',
+  'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'SHELL',
+  'USER', 'USERNAME', 'LOGNAME',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER',
+  'CI', 'GITHUB_ACTIONS', 'RUNNER_OS', 'RUNNER_ARCH',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+]);
+const signingEnvironmentAllowlist = Object.freeze([
+  'APPLE_ID',
+  'APPLE_APP_SPECIFIC_PASSWORD',
+  'APPLE_TEAM_ID',
+  'CSC_NAME',
+]);
+
+const createBuildEnvironment = (sourceEnv = process.env, options = {}) => {
+  const environment = {};
+  for (const key of buildEnvironmentAllowlist) {
+    if (typeof sourceEnv[key] === 'string' && sourceEnv[key]) environment[key] = sourceEnv[key];
+  }
+  Object.assign(environment, {
+    HOME: join(clientCacheRoot, 'home'),
+    XDG_CACHE_HOME: join(clientCacheRoot, 'xdg-cache'),
+    XDG_CONFIG_HOME: join(clientCacheRoot, 'xdg-config'),
+    XDG_DATA_HOME: join(clientCacheRoot, 'xdg-data'),
+    ELECTRON_CACHE: join(clientCacheRoot, 'electron'),
+    ELECTRON_BUILDER_CACHE: join(clientCacheRoot, 'electron-builder'),
+    electron_config_cache: join(clientCacheRoot, 'electron-builder'),
+  });
+  if (configuredElectronMirror) {
+    environment.ELECTRON_MIRROR = configuredElectronMirror;
+    environment.npm_config_electron_mirror = configuredElectronMirror;
+  }
+  if (configuredBuilderBinariesMirror) {
+    environment.ELECTRON_BUILDER_BINARIES_MIRROR = configuredBuilderBinariesMirror;
+    environment.NPM_CONFIG_ELECTRON_BUILDER_BINARIES_MIRROR = configuredBuilderBinariesMirror;
+    environment.npm_config_electron_builder_binaries_mirror = configuredBuilderBinariesMirror;
+  }
+  if (options.includeSigning) {
+    const signing = codeSigningSettings(sourceEnv);
+    Object.assign(environment, signing.env);
+    for (const key of signingEnvironmentAllowlist) {
+      if (typeof sourceEnv[key] === 'string' && sourceEnv[key]) environment[key] = sourceEnv[key];
+    }
+  }
+  return environment;
 };
 
 const sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms));
@@ -863,13 +1036,14 @@ const existingFile = async filePath => {
 const distReady = () => existingFile(join(distDir, 'index.html'));
 
 const normalizeAllowedExternalUrl = value => {
+  const source = String(value || '').trim();
+  if (source === officialProjectUrl || source === publicProjectRoute || source === clientProjectRoute) {
+    return clientProjectRoute;
+  }
   try {
-    const url = new URL(String(value || '').trim());
+    const url = new URL(source);
     if (url.protocol !== 'https:' || url.username || url.password || url.search) return '';
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
-    if (url.hostname === 'github.com' && pathname === '/3516634930/Payloader' && !url.hash) {
-      return officialProjectUrl;
-    }
     if (url.hostname === 'xss.icu' && pathname === '/' && !url.hash) {
       return protectedXeyeUrl;
     }
@@ -920,7 +1094,7 @@ const sanitizeClientPublicData = data => {
     ...snapshot,
     settings: {
       ...settings,
-      projectUrl: officialProjectUrl,
+      projectUrl: clientProjectRoute,
       logoUrl: referencedLogoUrl(snapshot),
     },
     payloads: Array.isArray(snapshot.payloads) ? snapshot.payloads.map(sanitizeClientPayload) : [],
@@ -970,6 +1144,8 @@ const frontendSourceFingerprint = async () => {
     join(rootDir, 'tsconfig.json'),
     join(rootDir, 'tsconfig.app.json'),
     electronMainTemplate,
+    clientDeploymentRuntimeSource,
+    projectAttributionSource,
     clientBuilderSource,
   ];
   return hashFiles([...sourceFiles, ...projectFiles]);
@@ -998,6 +1174,9 @@ const computeCurrentBuildHashes = async () => {
 };
 
 const getBuildFreshness = metadata => {
+  if (!normalizeSuccessfulMetadata(metadata)) {
+    return Promise.resolve(evaluateFreshness(null, {}, now()));
+  }
   const cacheKey = freshnessMetadataKey(metadata);
   const currentTime = Date.now();
   if (
@@ -1048,6 +1227,7 @@ const prepareElectronApp = async (workDir, publicData) => {
   const appDir = join(workDir, 'electron-app');
   const bundledDistDir = join(appDir, 'dist');
   const bundledAppDir = join(appDir, 'app');
+  const deploymentPackageDir = join(workDir, 'deployment.payloader');
   const buildOutputDir = join(workDir, 'electron-output');
   const routes = {};
   const fingerprint = createHash('sha256');
@@ -1116,10 +1296,27 @@ const prepareElectronApp = async (workDir, publicData) => {
     }
   }
 
+  const customToolsJson = JSON.stringify({
+    version: 1,
+    categories: publicData.tools.filter(tool => String(tool.id || '').startsWith('custom-')),
+  });
+  await writeFile(join(bundledAppDir, 'custom-tools.json'), customToolsJson, 'utf8');
+  fingerprint.update(customToolsJson);
+
+  const generatedAt = now();
+  const deploymentPackage = await writeClientDeploymentPackage({
+    destination: deploymentPackageDir,
+    publicData,
+    logoFile: referencedLogoFile(referencedLogoUrl(publicData)),
+    generatedAt,
+    buildContractVersion: clientBuildContractVersion,
+  });
+  fingerprint.update(JSON.stringify(deploymentPackage.manifest));
+
   const manifest = {
     productName,
     copyright,
-    generatedAt: now(),
+    generatedAt,
     buildContractVersion: clientBuildContractVersion,
     runtime: clientRuntime,
     distribution: clientDistribution,
@@ -1127,6 +1324,7 @@ const prepareElectronApp = async (workDir, publicData) => {
     performancePolicy: clientPerformancePolicy,
     securityPolicy: clientSecurityPolicy,
     publicDataSha256: hashValue(publicDataJson),
+    customToolsSha256: hashValue(customToolsJson),
     routes,
     stats: publicDataStats(publicData),
     excludes: [
@@ -1140,6 +1338,8 @@ const prepareElectronApp = async (workDir, publicData) => {
   fingerprint.update(JSON.stringify(manifest.routes));
 
   await copyFile(electronMainTemplate, join(appDir, 'main.cjs'));
+  await copyFile(clientDeploymentRuntimeSource, join(appDir, 'client-deployment-runtime.cjs'));
+  await copyFile(projectAttributionSource, join(appDir, 'project-attribution.cjs'));
 
   const electronVersion = await configuredElectronVersion();
   const signing = codeSigningSettings();
@@ -1165,6 +1365,8 @@ const prepareElectronApp = async (workDir, publicData) => {
       },
       files: [
         'main.cjs',
+        'client-deployment-runtime.cjs',
+        'project-attribution.cjs',
         'dist/**/*',
         'app/**/*',
         'package.json',
@@ -1230,6 +1432,8 @@ const prepareElectronApp = async (workDir, publicData) => {
   return {
     appDir,
     buildOutputDir,
+    deploymentPackageDir,
+    deploymentManifest: deploymentPackage.manifest,
     manifest,
     fingerprint: fingerprint.digest('hex'),
   };
@@ -1323,7 +1527,11 @@ const runBuild = async started => {
     await mkdir(workDir, { recursive: true });
     await mkdir(buildRoot, { recursive: true });
     await mkdir(clientCacheRoot, { recursive: true });
-    const { selected: selectedTargets, skipped: skippedTargets } = normalizeRequestedTargets(started.requestedTargets);
+    const shellCatalog = await loadShellCatalog();
+    const { selected: selectedTargets, skipped: skippedTargets } = normalizeRequestedTargets(
+      started.requestedTargets,
+      shellCatalog,
+    );
     if (!selectedTargets.length) {
       const reason = skippedTargets[0]?.reason || 'No supported client build targets are available on this host.';
       throw new Error(reason);
@@ -1340,7 +1548,7 @@ const runBuild = async started => {
       metadataMatchesCurrentContract(cached) &&
       cached.sourceHash === sourceHash &&
       cached.publicDataHash === publicDataHash &&
-      await metadataHasRequestedArtifacts(cached, selectedTargets)
+      await metadataHasRequestedArtifacts(cached, selectedTargets, shellCatalog)
     ) {
       const reused = {
         ...normalizeMetadata(cached),
@@ -1360,14 +1568,21 @@ const runBuild = async started => {
     }
     if (!frontendDistReady || (!immutableProductionRuntime && cached?.sourceHash !== sourceHash)) {
       currentJob = { ...currentJob, message: 'Building frontend assets' };
-      await run(process.execPath, [tscCli, '-b']);
-      await run(process.execPath, [viteCli, 'build']);
+      const compileEnvironment = createBuildEnvironment(process.env);
+      await run(process.execPath, [tscCli, '-b'], { env: compileEnvironment });
+      await run(process.execPath, [viteCli, 'build'], { env: compileEnvironment });
     } else {
       currentJob = { ...currentJob, message: 'Reusing current frontend assets' };
     }
 
     currentJob = { ...currentJob, message: 'Collecting public-only data snapshot' };
-    const { appDir, buildOutputDir, manifest, fingerprint } = await prepareElectronApp(workDir, publicData);
+    const {
+      appDir,
+      buildOutputDir,
+      deploymentPackageDir,
+      manifest,
+      fingerprint,
+    } = await prepareElectronApp(workDir, publicData);
 
     currentJob = { ...currentJob, message: 'Packaging desktop clients', selectedTargets: selectedTargetIds, skippedTargets };
     const signing = codeSigningSettings();
@@ -1378,43 +1593,70 @@ const runBuild = async started => {
     const items = [];
     const targetResults = [...skippedTargets];
     const buildEnv = {
-      ...process.env,
+      ...createBuildEnvironment(process.env, { includeSigning: true }),
       CSC_IDENTITY_AUTO_DISCOVERY: signing.configured ? 'true' : 'false',
-      HOME: join(clientCacheRoot, 'home'),
-      XDG_CACHE_HOME: join(clientCacheRoot, 'xdg-cache'),
-      XDG_CONFIG_HOME: join(clientCacheRoot, 'xdg-config'),
-      XDG_DATA_HOME: join(clientCacheRoot, 'xdg-data'),
-      ELECTRON_BUILDER_CACHE: join(clientCacheRoot, 'electron-builder'),
-      ELECTRON_MIRROR: defaultElectronMirror,
-      npm_config_electron_mirror: defaultElectronMirror,
-      ELECTRON_BUILDER_BINARIES_MIRROR: defaultBuilderBinariesMirror,
-      NPM_CONFIG_ELECTRON_BUILDER_BINARIES_MIRROR: defaultBuilderBinariesMirror,
-      npm_config_electron_builder_binaries_mirror: defaultBuilderBinariesMirror,
-      electron_config_cache: join(clientCacheRoot, 'electron-builder'),
-      ...signing.env,
     };
 
     for (const target of selectedTargets) {
+      const shell = shellTarget(shellCatalog, target);
       await rm(buildOutputDir, { recursive: true, force: true }).catch(() => {});
       currentJob = {
         ...currentJob,
-        message: `Packaging ${target.platformLabel} ${target.archLabel} ${target.format}`,
+        message: `Packaging ${target.platformLabel} ${target.archLabel}`,
         activeTarget: target.id,
         targetResults,
       };
       const buildStartedAt = Date.now();
-      await runElectronBuilderWithRetry(target, appDir, buildEnv);
+      let finalName;
+      let finalPath;
+      let artifactStats;
+      let sha256;
+      let format = target.format;
+      let mimeType = target.mimeType;
+      let installType = target.installType;
+      let packageManager = target.packageManager || '';
+      let buildSource = 'native-host';
+      let shellSha256 = '';
+      let shellVersion = '';
+      let artifactSigningConfigured = signing.configured;
 
-      const builtFiles = await collectFiles(buildOutputDir);
-      const artifact = findBuiltArtifact(builtFiles, buildOutputDir, target);
-      if (!artifact) {
-        throw new Error(`electron-builder did not produce ${target.platformLabel} ${target.archLabel} ${target.format}`);
+      if (shell) {
+        const shellArchive = await acquireClientShellArchive(shell, {
+          cacheRoot: join(clientCacheRoot, 'client-shells'),
+          token: process.env.PAYLOADER_GITHUB_TOKEN,
+        });
+        finalName = portableArtifactFileName(target, shell, stamp, started.id);
+        finalPath = join(buildRoot, finalName);
+        const assembled = await assembleClientShell({
+          shellArchive,
+          shell,
+          deploymentPackageDir,
+          destination: finalPath,
+          workRoot: workDir,
+        });
+        artifactStats = { size: assembled.size };
+        sha256 = assembled.sha256;
+        format = shell.outputFormat === 'zip' ? 'Portable ZIP' : 'Portable TAR.GZ';
+        mimeType = shell.outputFormat === 'zip' ? 'application/zip' : 'application/gzip';
+        installType = 'Portable directory';
+        packageManager = '';
+        buildSource = 'official-shell';
+        shellSha256 = shell.sha256;
+        shellVersion = String(shellCatalog.manifest?.appVersion || '');
+        artifactSigningConfigured = Boolean(shell.signed);
+      } else {
+        await runElectronBuilderWithRetry(target, appDir, buildEnv);
+        const builtFiles = await collectFiles(buildOutputDir);
+        const artifact = findBuiltArtifact(builtFiles, buildOutputDir, target);
+        if (!artifact) {
+          throw new Error(`electron-builder did not produce ${target.platformLabel} ${target.archLabel} ${target.format}`);
+        }
+        finalName = artifactFileName(target, stamp, started.id);
+        finalPath = join(buildRoot, finalName);
+        await copyFile(artifact, finalPath);
+        artifactStats = await stat(finalPath);
+        sha256 = await hashFile(finalPath);
       }
-      const finalName = artifactFileName(target, stamp, started.id);
-      const finalPath = join(buildRoot, finalName);
-      await copyFile(artifact, finalPath);
-      const artifactStats = await stat(finalPath);
-      const sha256 = await hashFile(finalPath);
       await writeFile(`${finalPath}.sha256.txt`, `${sha256}  ${finalName}\n`, 'utf8');
       const item = {
         targetId: target.id,
@@ -1422,7 +1664,7 @@ const runBuild = async started => {
         platformLabel: target.platformLabel,
         arch: target.arch,
         archLabel: target.archLabel,
-        format: target.format,
+        format,
         fileName: finalName,
         size: artifactStats.size,
         sha256,
@@ -1430,17 +1672,22 @@ const runBuild = async started => {
         runtime: clientRuntime,
         distribution: clientDistribution,
         buildContractVersion: clientBuildContractVersion,
-        codeSigningConfigured: signing.configured,
-        signingStatus: signing.configured ? 'configured' : 'unsigned',
-        mimeType: target.mimeType,
+        codeSigningConfigured: artifactSigningConfigured,
+        signingStatus: artifactSigningConfigured ? 'configured' : 'unsigned',
+        mimeType,
         cpuFamily: target.cpuFamily,
         minOsVersion: target.minOsVersion,
-        installType: target.installType,
-        packageManager: target.packageManager || '',
+        installType,
+        packageManager,
+        buildSource,
+        shellVersion,
+        shellSha256,
         elapsedMs: Date.now() - buildStartedAt,
         performanceNotes: [
           'Artifact SHA256 is computed with a file stream to keep builder memory stable.',
-          target.platform === 'windows'
+          buildSource === 'official-shell'
+            ? 'The server replaces only the external deployment package and does not rebuild the official shell.'
+            : target.platform === 'windows'
             ? 'NSIS uses normal compression and does not auto-launch after install.'
             : target.platform === 'linux'
               ? `${target.format} uses faster package compression where supported.`
@@ -1450,7 +1697,9 @@ const runBuild = async started => {
           'No autostart, updater, shell injection, packing, obfuscation, or security-software evasion is added by the builder.',
           'Use code signing, stable download URLs, and SHA256 verification for reputation and integrity.',
         ],
-        notes: artifactNotes(target, signing),
+        notes: buildSource === 'official-shell'
+          ? ['Extract the portable archive and run Payloader from the extracted directory.']
+          : artifactNotes(target, signing),
       };
       items.push(item);
       targetResults.push({
@@ -1459,6 +1708,7 @@ const runBuild = async started => {
         fileName: finalName,
         size: artifactStats.size,
         elapsedMs: item.elapsedMs,
+        buildSource,
       });
     }
 
@@ -1478,8 +1728,12 @@ const runBuild = async started => {
       runtime: clientRuntime,
       distribution: clientDistribution,
       buildContractVersion: clientBuildContractVersion,
-      codeSigningConfigured: signing.configured,
-      signingStatus: signing.configured ? 'configured' : 'unsigned',
+      codeSigningConfigured: normalizedItems.length > 0
+        && normalizedItems.every(item => item.codeSigningConfigured),
+      signingStatus: normalizedItems.length > 0
+        && normalizedItems.every(item => item.codeSigningConfigured)
+        ? 'configured'
+        : 'unsigned',
       fingerprint,
       sourceHash,
       publicDataHash,
@@ -1490,6 +1744,11 @@ const runBuild = async started => {
       copyright,
       publicStats: manifest.stats,
       exclusions: manifest.excludes,
+      shellCatalog: {
+        source: shellCatalog.source,
+        appVersion: shellCatalog.manifest?.appVersion || '',
+        generatedAt: shellCatalog.manifest?.generatedAt || '',
+      },
     };
     await persistSuccessfulMetadata(metadata);
     currentJob = null;
@@ -1514,7 +1773,11 @@ const runBuild = async started => {
 
 export const getClientBuildStatus = async () => {
   await mkdir(buildRoot, { recursive: true });
-  const { latest: storedLatest, lastFailure } = await readStoredBuildState();
+  const [{ latest: storedLatest, lastFailure }, publicData, shellCatalog] = await Promise.all([
+    readStoredBuildState(),
+    getPublicData(),
+    loadShellCatalog(),
+  ]);
   const freshness = await getBuildFreshness(storedLatest);
   const currentLatest = metadataMatchesCurrentContract(storedLatest);
   const latest = currentLatest
@@ -1534,9 +1797,10 @@ export const getClientBuildStatus = async () => {
     latest,
     items: currentLatest ? storedLatest?.items || [] : [],
     lastFailure,
+    publicStats: publicDataStats(publicData),
     freshness,
     staleLatest: currentLatest ? null : staleMetadataSummary(storedLatest),
-    targets: clientTargetMatrix.map(normalizeTargetAvailability),
+    targets: clientTargetMatrix.map(target => normalizeTargetAvailability(target, shellCatalog)),
     canGenerate: !currentJob,
     environment: {
       platform: process.platform,
@@ -1551,8 +1815,11 @@ export const getClientBuildStatus = async () => {
       requiresUserNode: false,
       codeSigningConfigured: signing.configured,
       crossPlatformOverride,
-      electronMirror: defaultElectronMirror,
-      electronBuilderBinariesMirror: defaultBuilderBinariesMirror,
+      electronMirror: configuredElectronMirror || 'official-upstream',
+      electronBuilderBinariesMirror: configuredBuilderBinariesMirror || 'official-upstream',
+      shellSource: shellCatalog.source,
+      shellVersion: shellCatalog.manifest?.appVersion || '',
+      shellError: shellCatalog.error || '',
     },
     policies: {
       network: clientNetworkPolicy,
@@ -1564,7 +1831,10 @@ export const getClientBuildStatus = async () => {
 
 export const getPublicClientBuildInfo = async () => {
   await mkdir(buildRoot, { recursive: true });
-  const { latest: metadata, lastFailure } = await readStoredBuildState();
+  const [{ latest: metadata, lastFailure }, shellCatalog] = await Promise.all([
+    readStoredBuildState(),
+    loadShellCatalog(),
+  ]);
   const freshness = await getBuildFreshness(metadata);
   if (!metadataMatchesCurrentContract(metadata) || !metadata.items.length) {
     return {
@@ -1579,7 +1849,7 @@ export const getPublicClientBuildInfo = async () => {
       codeSigningConfigured: false,
       lastBuildFailed: Boolean(lastFailure),
       publicStats: publicDataStats({}),
-      targets: clientTargetMatrix.map(normalizeTargetAvailability),
+      targets: clientTargetMatrix.map(target => normalizeTargetAvailability(target, shellCatalog)),
       staleLatest: staleMetadataSummary(metadata),
       freshness,
       policies: {
@@ -1611,7 +1881,7 @@ export const getPublicClientBuildInfo = async () => {
     codeSigningConfigured: Boolean(metadata.codeSigningConfigured),
     lastBuildFailed: Boolean(lastFailure),
     publicStats: metadata.publicStats || publicDataStats({}),
-    targets: clientTargetMatrix.map(normalizeTargetAvailability),
+    targets: clientTargetMatrix.map(target => normalizeTargetAvailability(target, shellCatalog)),
     freshness,
     policies: {
       performance: clientPerformancePolicy,
@@ -1624,7 +1894,8 @@ export const startClientBuild = async (options = {}) => {
   await mkdir(tmpRoot, { recursive: true });
   if (currentJob) return currentJob;
   const requestedTargets = Array.isArray(options?.targets) ? options.targets : [];
-  const { selected, skipped } = normalizeRequestedTargets(requestedTargets);
+  const shellCatalog = await loadShellCatalog();
+  const { selected, skipped } = normalizeRequestedTargets(requestedTargets, shellCatalog);
   const started = {
     id: randomUUID().replace(/-/g, ''),
     status: 'queued',
@@ -1677,6 +1948,11 @@ export const __clientBuildTest = Object.freeze({
     lastFailureFile,
   }),
   freshnessCacheTtlMs,
+  performancePolicy: clientPerformancePolicy,
+  prepareElectronApp,
+  buildPublicDataSnapshot,
+  createBuildEnvironment,
+  sanitizeClientPublicData,
   evaluateFreshness,
   persistSuccessfulMetadata,
   persistFailureMetadata,
@@ -1684,5 +1960,9 @@ export const __clientBuildTest = Object.freeze({
   setFreshnessHashProvider(provider) {
     freshnessHashProvider = typeof provider === 'function' ? provider : null;
     invalidateFreshnessCache();
+  },
+  setShellCatalogProvider(provider) {
+    shellCatalogProvider = typeof provider === 'function' ? provider : null;
+    shellCatalogCache = null;
   },
 });

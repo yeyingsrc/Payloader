@@ -15,12 +15,14 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS runtime
+ARG PAYLOADER_COMMIT_SHA=""
 ENV NODE_ENV=production \
     PAYLOADER_HOST=0.0.0.0 \
     PAYLOADER_PORT=8081 \
     PAYLOADER_DATA_DIR=/app/data \
     PAYLOADER_SEED_DB=/app/server/default-seed.sqlite \
-    PAYLOADER_CLIENT_CACHE_DIR=/tmp/payloader-client-cache
+    PAYLOADER_CLIENT_CACHE_DIR=/tmp/payloader-client-cache \
+    PAYLOADER_COMMIT_SHA=$PAYLOADER_COMMIT_SHA
 
 WORKDIR /app
 COPY --from=builder /app/package.json /app/package-lock.json ./

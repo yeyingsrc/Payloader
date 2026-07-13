@@ -100,7 +100,7 @@ function PayloadDetail({ payloadId }: PayloadDetailProps) {
     payloadId,
     section: 'payloads',
   });
-  const [payloadQuery, setPayloadQuery] = useState('');
+  const [payloadQueryState, setPayloadQueryState] = useState({ payloadId, value: '' });
 
   const resolvedPayloadId = payloadIdAliases[payloadId] || payloadId;
   const payload = allPayloads.find(item => item.id === payloadId) || allPayloads.find(item => item.id === resolvedPayloadId);
@@ -109,6 +109,8 @@ function PayloadDetail({ payloadId }: PayloadDetailProps) {
   const requestedSection = sectionSelection.payloadId === payloadId ? sectionSelection.section : 'payloads';
   const activeSection = requestedSection === 'tutorial' && !hasSubstantiveTutorial ? 'payloads' : requestedSection;
   const setActiveSection = (section: DetailSection) => setSectionSelection({ payloadId, section });
+
+  const payloadQuery = payloadQueryState.payloadId === payloadId ? payloadQueryState.value : '';
 
   const executionItems = useMemo<PayloadExecution[]>(() => {
     if (!payload) return [];
@@ -313,13 +315,14 @@ function PayloadDetail({ payloadId }: PayloadDetailProps) {
             <div className="payload-search-field">
               <input
                 type="search"
+                name="payload-command-search"
                 value={payloadQuery}
-                onChange={event => setPayloadQuery(event.target.value)}
+                onChange={event => setPayloadQueryState({ payloadId, value: event.target.value })}
                 placeholder={label('searchPlaceholder', language)}
                 aria-label={label('searchPlaceholder', language)}
               />
               {payloadQuery && (
-                <button type="button" onClick={() => setPayloadQuery('')} aria-label={label('clearSearch', language)}>
+                <button type="button" onClick={() => setPayloadQueryState({ payloadId, value: '' })} aria-label={label('clearSearch', language)}>
                   ×
                 </button>
               )}

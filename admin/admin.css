@@ -1828,6 +1828,34 @@ body[data-module="account"] .maintenance-group {
   padding: 0;
 }
 
+.list-load-more {
+  width: calc(100% - 24px);
+  min-height: 44px;
+  margin: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.list-load-more:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.list-load-more small {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.locked-record-note {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .item-row {
   position: relative;
   width: 100%;
@@ -3651,6 +3679,225 @@ button,
   font-size: 13px;
 }
 
+.module-btn {
+  position: relative;
+}
+
+.module-update-badge {
+  position: absolute;
+  top: 9px;
+  right: 24px;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid #f2bd55;
+  border-radius: 4px;
+  background: #fff5d8;
+  color: #8a5700;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.version-update-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.version-update-summary,
+.version-update-panel,
+.version-update-timeline,
+.version-update-error,
+.version-update-notes {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.version-update-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px;
+  border-left-width: 4px;
+}
+
+.version-update-summary[data-tone="success"] { border-left-color: #22a06b; }
+.version-update-summary[data-tone="warning"] { border-left-color: #d99a24; }
+.version-update-summary[data-tone="danger"] { border-left-color: #d14343; }
+.version-update-summary[data-tone="checking"] { border-left-color: #2878d0; }
+.version-update-summary[data-tone="neutral"] { border-left-color: #7b8794; }
+
+.version-update-summary span,
+.version-update-panel header span,
+.version-update-notes > span {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.version-update-summary h3 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+
+.version-update-summary p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.version-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.version-update-actions .btn {
+  min-width: 112px;
+  text-align: center;
+}
+
+.version-update-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.version-update-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 15px;
+}
+
+.version-update-panel header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.version-update-panel header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  text-align: right;
+}
+
+.version-update-panel dl {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+
+.version-update-panel dl div {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.version-update-panel dt {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.version-update-panel dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+  text-align: right;
+}
+
+.version-update-panel code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+
+.version-update-note,
+.version-update-commit {
+  margin: 0;
+  padding: 9px 10px;
+  border-left: 3px solid #d99a24;
+  background: #fffaf0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.version-update-commit {
+  border-left-color: #2878d0;
+  background: #f3f8fe;
+}
+
+.version-update-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.version-update-timeline div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 13px 15px;
+  border-right: 1px solid var(--border);
+}
+
+.version-update-timeline div:last-child {
+  border-right: 0;
+}
+
+.version-update-timeline span {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.version-update-timeline strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.version-update-error {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-color: #efb4b4;
+  background: #fff5f5;
+  color: #8e2929;
+}
+
+.version-update-error span {
+  font-size: 12px;
+}
+
+.version-update-notes {
+  display: grid;
+  gap: 9px;
+  padding: 15px;
+}
+
+.version-update-notes pre {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .field input,
 .field textarea,
 .field select,
@@ -3669,6 +3916,19 @@ button,
 }
 
 @media (max-width: 860px) {
+  .version-update-summary,
+  .version-update-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .version-update-actions {
+    justify-content: stretch;
+  }
+
+  .version-update-actions .btn {
+    flex: 1 1 140px;
+  }
+
   .admin-shell,
   body[data-module="settings"] .admin-shell,
   body[data-mobile-view="editor"]:not([data-module="settings"]) .admin-shell {
@@ -3859,6 +4119,32 @@ button,
 }
 
 @media (max-width: 560px) {
+  .version-update-summary,
+  .version-update-panel,
+  .version-update-notes {
+    padding: 12px;
+  }
+
+  .version-update-panel dl div,
+  .version-update-timeline {
+    grid-template-columns: 1fr;
+  }
+
+  .version-update-panel dd,
+  .version-update-panel header strong {
+    text-align: left;
+  }
+
+  .version-update-timeline div,
+  .version-update-timeline div:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .version-update-timeline div:last-child {
+    border-bottom: 0;
+  }
+
   .admin-shell,
   body[data-module="settings"] .admin-shell,
   body[data-mobile-view="editor"]:not([data-module="settings"]) .admin-shell {

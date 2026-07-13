@@ -48,7 +48,7 @@ const waitUntilReady = async () => {
 await waitUntilReady();
 
 const { body: home } = await request('/');
-assert.match(String(home), /<div id="root"><\/div>/);
+assert.match(String(home), /<div id="root">/);
 
 const { body: adminLoginPage } = await request('/admin/login');
 assert.match(String(adminLoginPage), /<form[^>]+id="login-form"/);
@@ -64,6 +64,7 @@ assert.equal(typeof publicClient.lastBuildFailed, 'boolean');
 assert.equal('lastFailure' in publicClient, false);
 
 await request('/api/admin/settings', {}, [401]);
+await request('/api/admin/version-status', {}, [401]);
 
 const login = await request('/api/admin/login', {
   method: 'POST',
@@ -74,15 +75,19 @@ const login = await request('/api/admin/login', {
   body: JSON.stringify({ username, password }),
 });
 assert.equal(login.body.authenticated, true);
-assert.ok(login.body.csrfToken);
-const cookie = login.response.headers.get('set-cookie')?.split(';', 1)[0];
-assert.ok(cookie?.startsWith('payloader_admin_session='));
+assert.equal(login.body.tokenType, 'Bearer');
+assert.match(login.body.accessToken, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+assert.equal(login.response.headers.get('set-cookie'), null);
 
 const adminHeaders = {
-  cookie,
+  authorization: `Bearer ${login.body.accessToken}`,
   'user-agent': userAgent,
-  'x-payloader-csrf': login.body.csrfToken,
 };
+const { body: versionStatus } = await request('/api/admin/version-status', { headers: adminHeaders });
+assert.equal(versionStatus.installed.version, '2.0.0');
+assert.equal(typeof versionStatus.installed.commitShort, 'string');
+assert.match(versionStatus.projectRoute, /^\//);
+
 const { body: exported } = await request('/api/admin/export', { headers: adminHeaders });
 assert.equal(exported.format, 'payloader.export.v1');
 assert.ok(exported.data.payloads.length > 0);

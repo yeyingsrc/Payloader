@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 
 const read = relativePath => readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
@@ -23,6 +24,49 @@ test('public shell exposes skip navigation and a labelled main landmark', async 
 
   assert.match(app, /href=["']#main-content["']/);
   assert.match(main, /<main\b[^>]*id=["']main-content["']/s);
+});
+
+test('deployed HTML exposes the existing Xeye link to non-JavaScript crawlers', async () => {
+  const [html, header, protectedLinks, dataStore, clientBuilder, readme] = await Promise.all([
+    read('index.html'),
+    read('src/components/Header.tsx'),
+    read('src/protectedLinks.ts'),
+    read('server/data-store.mjs'),
+    read('server/client-builder.mjs'),
+    read('README.md'),
+  ]);
+
+  const staticLink = html.match(/<a\b[^>]*href=["']https:\/\/xss\.icu\/["'][^>]*>\s*Xeye XSS 平台\s*<\/a>/s)?.[0] || '';
+  assert.ok(staticLink, 'the initial HTML must contain the visible Xeye anchor');
+  assert.doesNotMatch(staticLink, /rel=["'][^"']*(?:nofollow|sponsored|ugc)/i);
+  assert.doesNotMatch(staticLink, /noreferrer/i);
+  assert.match(staticLink, /referrerpolicy=["']origin["']/i);
+  assert.match(header, /<a[\s\S]*?href=\{protectedExternalLinks\.xeye\.href\}/);
+  assert.match(header, /settings\.xeyeEnabled !== false/);
+  assert.match(header, /href=\{protectedExternalLinks\.xeye\.href\}[\s\S]*?referrerPolicy=["']origin["']/);
+  assert.doesNotMatch(protectedLinks, /window\.open\(href, '_blank', 'noopener,noreferrer'\)/);
+  assert.doesNotMatch(protectedLinks, /decodeProtectedText|xeyeUrlBytes/);
+  assert.doesNotMatch(dataStore, /verifyProtectedLinkSource|protectedIntegrity|assertProtectedHash/);
+  assert.doesNotMatch(clientBuilder, /decodeProtectedText/);
+  assert.match(readme, /\[Xeye XSS 平台\]\(https:\/\/xss\.icu\/\)/);
+
+  const structuredDataSource = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/)?.[1] || '';
+  const structuredData = JSON.parse(structuredDataSource);
+  assert.equal(structuredData.mentions?.url, 'https://xss.icu/');
+  assert.equal(structuredData.mentions?.name, 'Xeye XSS 平台');
+});
+
+test('the production server removes static Xeye metadata after an administrator deletes the entry', async () => {
+  const [server, html] = await Promise.all([
+    read('server/admin-server.mjs'),
+    read('index.html'),
+  ]);
+
+  assert.match(html, /id=["']xeye-structured-data["']/);
+  assert.match(html, /data-xeye-platform-link/);
+  assert.match(server, /settings\.xeyeEnabled/);
+  assert.match(server, /xeye-structured-data/);
+  assert.match(server, /data-xeye-platform-link/);
 });
 
 test('sidebar uses an accessible tree with semantic controls', async () => {
@@ -75,6 +119,17 @@ test('mobile search input meets the minimum touch target', async () => {
   assert.doesNotMatch(header, /\.search-input\s*\{[^}]*height:\s*42px/s);
 });
 
+test('public search controls expose stable form names', async () => {
+  const [header, payloadDetail] = await Promise.all([
+    read('src/components/Header.tsx'),
+    read('src/components/PayloadDetail.tsx'),
+  ]);
+
+  assert.match(header, /name=["']content-search["']/);
+  assert.match(header, /name=["']variable-search["']/);
+  assert.match(payloadDetail, /name=["']payload-command-search["']/);
+});
+
 test('mobile encoding controls meet the minimum touch target', async () => {
   const encodingTools = await read('src/components/EncodingTools.tsx');
   const mobileStyles = encodingTools.slice(encodingTools.indexOf('@media (max-width: 680px)'));
@@ -89,6 +144,99 @@ test('payload tutorial and WAF states are content driven', async () => {
   assert.match(detail, /hasSubstantiveTutorial/);
   assert.match(detail, /hasWafContent/);
   assert.match(detail, /hasSubstantiveTutorial\s*&&/);
+});
+
+test('payload filtering is keyed to selection and tool copy has a clipboard fallback', async () => {
+  const [payloadDetail, toolDetail] = await Promise.all([
+    read('src/components/PayloadDetail.tsx'),
+    read('src/components/ToolDetail.tsx'),
+  ]);
+
+  assert.match(payloadDetail, /payloadQueryState\.payloadId === payloadId \? payloadQueryState\.value : ''/);
+  assert.match(payloadDetail, /setPayloadQueryState\(\{ payloadId, value: event\.target\.value \}\)/);
+  assert.match(toolDetail, /navigator\.clipboard\.writeText\(processedText\)[\s\S]*?document\.execCommand\('copy'\)/);
+});
+
+test('generated-review placeholders are editable global variables', async () => {
+  const variables = await read('src/data/globalVariables.ts');
+
+  for (const key of [
+    'LAB_DOMAIN', 'LAB_HOST', 'LAB_USER', 'LAB_PASSWORD', 'LAB_NTLM_HASH', 'EXCHANGE_HOST',
+    'LAB_APP', 'LAB_ORIGIN', 'LAB_SSRF_APP', 'LAB_MYSQL_HOST', 'LAB_FASTCGI_HOST', 'LAB_OAST',
+    'LAB_REBIND_DOMAIN', 'LAB_SMUGGLE_HOST', 'LAB_SMUGGLE_PORT', 'LAB_SIGNING_KEY', 'LAB_NODE',
+    'LAB_GATEWAY', 'LAB_GPO', 'LAB_GROUP', 'LAB_JUMP', 'LAB_LABEL', 'LAB_MACHINE', 'LAB_SITE',
+    'LAB_TASK', 'LAB_TOKEN', 'LAB_VALUE', 'LAB_DLL_FILE', 'LAB_ENCODED_FILE', 'LAB_SHELLCODE_FILE',
+  ]) {
+    assert.match(variables, new RegExp(`key: '${key}'`));
+  }
+});
+
+test('every business command placeholder has an editable global variable', async () => {
+  const variables = await read('src/data/globalVariables.ts');
+  const registered = new Set([...variables.matchAll(/key:\s*'([^']+)'/g)].map(match => match[1]));
+  const database = new DatabaseSync(new URL('../server/default-seed.sqlite', import.meta.url), { readOnly: true });
+  const ignoredShellTokens = new Set(['IFS', 'DOESNOTEXIST']);
+  const missing = new Set();
+
+  try {
+    for (const [table, column, areas] of [
+      ['payloads', 'data', ['execution', 'wafBypass']],
+      ['tools', 'data', ['commands']],
+    ]) {
+      for (const row of database.prepare(`SELECT ${column} AS json FROM ${table} WHERE enabled = 1`).all()) {
+        const item = JSON.parse(row.json);
+        for (const area of areas) {
+          for (const entry of Array.isArray(item[area]) ? item[area] : []) {
+            for (const match of String(entry.command || '').matchAll(/\{([A-Z][A-Z0-9_]+)\}/g)) {
+              const key = match[1];
+              if (!registered.has(key) && !ignoredShellTokens.has(key)) missing.add(key);
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    database.close();
+  }
+
+  assert.deepEqual([...missing].sort(), []);
+});
+
+test('commands and attack chains use canonical variable placeholders', () => {
+  const database = new DatabaseSync(new URL('../server/default-seed.sqlite', import.meta.url), { readOnly: true });
+  const legacyVariable = /<(?:host|port|payload|command|ip|target|url|domain|file|path|username|password)>/i;
+  const findings = [];
+
+  try {
+    for (const [table, areas] of [
+      ['payloads', ['execution', 'wafBypass', 'attackChain']],
+      ['tools', ['commands']],
+    ]) {
+      for (const row of database.prepare(`SELECT id, data FROM ${table} WHERE enabled = 1`).all()) {
+        const item = JSON.parse(row.data);
+        for (const area of areas) {
+          for (const entry of Array.isArray(item[area]) ? item[area] : []) {
+            const text = area === 'attackChain' ? String(entry.payload || '') : String(entry.command || '');
+            if (legacyVariable.test(text)) findings.push(`${table}:${row.id}:${area}`);
+          }
+        }
+      }
+    }
+  } finally {
+    database.close();
+  }
+
+  assert.deepEqual(findings, []);
+});
+
+test('global-variable panel returns focus to its own toggle', async () => {
+  const header = await read('src/components/Header.tsx');
+
+  const payloadTab = header.match(/<button\s+[^>]*role="tab"[\s\S]*?\{t\('header\.tabPayloads', language\)\}/)?.[0] || '';
+  const variableToggle = header.match(/<button\s+[^>]*className="variables-toggle"[\s\S]*?\{t\('header\.variables', language\)\}/)?.[0] || '';
+
+  assert.doesNotMatch(payloadTab, /ref=\{variablesToggleRef\}/);
+  assert.match(variableToggle, /ref=\{variablesToggleRef\}/);
 });
 
 test('download artifacts render before the secondary target matrix', async () => {
@@ -142,6 +290,114 @@ test('admin mobile controls meet touch targets and polish CSS is balanced', asyn
   assert.match(polish, /input:not\(\[type="file"\]\)[\s\S]*?min-height:\s*44px !important/);
 });
 
+test('admin shell uses enterprise action hierarchy and mobile module selection', async () => {
+  const [html, login, admin] = await Promise.all([
+    read('admin/index.html'),
+    read('admin/login.html'),
+    read('admin/admin.js'),
+  ]);
+
+  assert.match(html, /id=["']admin-module-select["']/);
+  assert.match(html, /id=["']more-actions["']/);
+  assert.match(html, /class=["'][^"']*more-actions-menu/);
+  assert.doesNotMatch(html, /class=["']stats-grid["']/);
+  assert.match(html, /aria-label=["']更多后台操作["']/);
+  assert.match(login, /<h1[^>]*id=["']login-title["'][^>]*>Payloader Admin<\/h1>/);
+  assert.doesNotMatch(login, /login-intro|login-capabilities|login-security/);
+  assert.doesNotMatch(login, /统一维护|面向管理员|内容管理|结构治理|发布交付|管理员身份验证|会话使用/);
+  assert.doesNotMatch(html, /管理前台展示的内容和结构|正在编辑/);
+  for (const subtitle of ['标题、Logo', '命令、教程、引用', '工具分类和命令库', '前台左侧分类结构', '版本与源码状态', '快速添加文本内容']) {
+    assert.doesNotMatch(html, new RegExp(`<small>${subtitle}</small>`));
+  }
+  assert.doesNotMatch(admin, /\bdesc:\s*['"][^'"]*['"]/);
+  assert.doesNotMatch(admin, /Payloader Update Center|检查当前部署版本、官方稳定版本和默认分支源码状态/);
+});
+
+test('admin exposes a responsive and text-safe system update center', async () => {
+  const [html, admin, styles] = await Promise.all([
+    read('admin/index.html'),
+    read('admin/admin.js'),
+    read('admin/admin.css'),
+  ]);
+
+  assert.match(html, /<option value=["']updates["']>系统更新<\/option>/);
+  assert.match(html, /class=["'][^"']*module-btn[^"']*["'][^>]*data-module=["']updates["']/);
+  assert.match(admin, /updates:\s*\{[\s\S]*?api:\s*['"]\/api\/admin\/version-status['"]/);
+  assert.match(admin, /const singletonModules = new Set\(\[[^\]]*['"]updates['"]/);
+  assert.match(admin, /const renderVersionUpdateCenter = \(\) =>/);
+  assert.match(admin, /api\(['"]\/api\/admin\/version-check['"],\s*\{ method:\s*['"]POST['"] \}\)/);
+  assert.match(admin, /escapeHtml\(stable\.notes/);
+  assert.match(admin, /state\.versionChecking/);
+  assert.match(admin, /官方发布版本/);
+  assert.match(admin, /未发现 Release \/ Tag/);
+  assert.match(admin, /formatVersionDate\(stable\.publishedAt, '未发布'\)/);
+  assert.match(admin, /readOnlyStatusModule/);
+  assert.match(styles, /\.version-update-shell\s*\{/);
+  assert.match(styles, /\.version-update-timeline\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,/);
+  assert.match(styles, /@media \(max-width: 860px\)[\s\S]*?\.version-update-grid[\s\S]*?grid-template-columns:\s*1fr/);
+});
+
+test('admin content lists use bounded incremental rendering', async () => {
+  const admin = await read('admin/admin.js');
+
+  assert.match(admin, /const itemListPageSize = 120/);
+  assert.match(admin, /items\.slice\(0, visibleItemLimit\)/);
+  assert.match(admin, /data-action="load-more-items"/);
+  assert.match(admin, /state\.visibleItemLimit \+= itemListPageSize/);
+});
+
+test('admin editor validates publishable content before saving', async () => {
+  const admin = await read('admin/admin.js');
+
+  assert.match(admin, /const validateContentInput = item =>/);
+  assert.match(admin, /请补全中英文名称/);
+  assert.match(admin, /请至少添加一条完整的执行命令/);
+  assert.match(admin, /请补全教程的中英文内容/);
+  assert.match(admin, /if \(!validateContentInput\(item\)\) return/);
+  assert.doesNotMatch(admin, /command:\s*['"]echo TODO['"]/);
+});
+
+test('admin keeps the default Xeye item deletable while locking edits and reordering', async () => {
+  const admin = await read('admin/admin.js');
+
+  assert.match(admin, /const lockedSelection = Boolean\(selectedItem\(\)\?\.systemLocked\)/);
+  assert.match(admin, /\$\('delete-item'\)\.disabled = busy \|\| !dataActions \|\| !selectedItem\(\)/);
+});
+
+test('legacy custom admin entry reuses the authenticated admin module', async () => {
+  const html = await read('admin/custom.html');
+  const script = await read('admin/custom.js');
+  const customModule = await read('admin/custom-module.js');
+
+  assert.doesNotMatch(html, /<style>/);
+  assert.doesNotMatch(html, /type=["']password["']/);
+  assert.match(script, /payloader-admin-initial-module/);
+  assert.match(script, /location\.replace\(['"]\/admin['"]\)/);
+  assert.doesNotMatch(customModule, /<style>/);
+  assert.doesNotMatch(customModule, /style\.cssText/);
+});
+
+test('admin shell is public while admin data uses explicit Bearer authorization', async () => {
+  const login = await read('admin/login.html');
+  const loginScript = await read('admin/login.js');
+  const server = await read('server/admin-server.mjs');
+  const admin = await read('admin/admin.js');
+
+  assert.match(login, /admin-polish\.css/);
+  assert.doesNotMatch(login, /Bearer JWT/);
+  assert.doesNotMatch(login, /HttpOnly Cookie/);
+  assert.match(loginScript, /body\.tokenType !== 'Bearer'/);
+  assert.match(loginScript, /sessionStorage\.setItem\(tokenStorageKey, body\.accessToken\)/);
+  assert.doesNotMatch(loginScript, /正在建立安全会话|登录成功，正在进入后台|进入后台/);
+  assert.match(server, /url\.pathname === '\/admin'[\s\S]*?serveStatic\(request, response, adminPath\)/);
+  assert.match(server, /handleAdminApi[\s\S]*?requireAuth\(request, response\)/);
+  assert.match(server, /authorization\.match\(\/\^Bearer/);
+  assert.match(admin, /sessionStorage\.getItem\(adminTokenStorageKey\)/);
+  assert.match(admin, /headers\.authorization = `Bearer \$\{state\.accessToken\}`/);
+  assert.doesNotMatch(admin, /localStorage\.setItem\([^\n]*access-token/);
+  assert.doesNotMatch(server, /parseCookies|sessionCookie|set-cookie/);
+});
+
 test('admin reset previews impact, creates a backup, and reports its location', async () => {
   const admin = await read('admin/admin.js');
 
@@ -149,7 +405,62 @@ test('admin reset previews impact, creates a backup, and reports its location', 
   assert.match(admin, /impact\.before/);
   assert.match(admin, /impact\.seed/);
   assert.match(admin, /impact\.delta/);
+  assert.match(admin, /impact\.integrations\?\.xeye/);
+  assert.match(admin, /Xeye 平台入口/);
+  assert.match(admin, /重置后恢复/);
   assert.match(admin, /backup\?\.(?:path|fileName)|backup\.(?:path|fileName)/);
   assert.doesNotMatch(admin, /此操作不可撤销/);
   assert.doesNotMatch(admin, /const renderClientBuildForm =/);
+});
+
+test('large catalog search builds one shared index and defers result rendering', async () => {
+  const app = await read('src/App.tsx');
+  const sidebar = await read('src/components/Sidebar.tsx');
+  const mainContent = await read('src/components/MainContent.tsx');
+  const searchIndex = await read('src/searchIndex.ts');
+
+  assert.match(app, /useDeferredValue/);
+  assert.match(app, /buildSearchIndex/);
+  assert.match(app, /searchMatches/);
+  assert.match(searchIndex, /buildSearchIndex/);
+  assert.match(searchIndex, /matchSearchIndex/);
+  assert.match(searchIndex, /payloads:\s*readonly PayloadItem\[\]/);
+  assert.match(searchIndex, /tools:\s*readonly ToolCommand\[\]/);
+  assert.doesNotMatch(sidebar, /const searchable\s*=/);
+  assert.doesNotMatch(mainContent, /const searchable\s*=/);
+});
+
+test('admin custom content uses its authenticated narrow endpoint', async () => {
+  const customModule = await read('admin/custom-module.js');
+
+  assert.match(customModule, /\/api\/admin\/custom-content/);
+  assert.doesNotMatch(customModule, /authorizedFetch\(['"]\/api\/admin\/custom-payloads/);
+  assert.match(customModule, /const authorizedFetch = async/);
+  assert.match(customModule, /response\.status === 401[\s\S]*?sessionStorage\.removeItem\(tokenStorageKey\)[\s\S]*?location\.replace\(['"]\/admin\/login['"]\)/);
+  assert.doesNotMatch(customModule, /fetch\(['"]\/api\/public-data['"]\)/);
+});
+
+test('admin custom content supports payload and tool destinations through the narrow API', async () => {
+  const customModule = await read('admin/custom-module.js');
+
+  assert.match(customModule, /id="cp-destination"/);
+  assert.match(customModule, /value="payloads"/);
+  assert.match(customModule, /value="tools"/);
+  assert.match(customModule, /sourceDestination/);
+  assert.match(customModule, /recordByKey/);
+  assert.match(customModule, /const moduleDescription = document\.getElementById\('module-desc'\)/);
+  assert.match(customModule, /if \(moduleDescription\)/);
+  assert.doesNotMatch(customModule, /dataset\.content/);
+});
+
+test('sidebar derives custom entries from the active payload or tool collection', async () => {
+  const sidebar = await read('src/components/Sidebar.tsx');
+
+  assert.match(sidebar, /allToolCommands/);
+  assert.match(sidebar, /toolId: item\.id/);
+  assert.match(sidebar, /payloadId: item\.id/);
+  assert.doesNotMatch(
+    sidebar,
+    /activeTab !== 'payloads' && activeTab !== 'tools'[\s\S]*return allPayloads/,
+  );
 });

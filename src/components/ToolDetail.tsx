@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAppContext } from '../appContext';
 import { t, getText } from '../i18n';
-import { openProtectedExternalLink } from '../protectedLinks';
+import { isProtectedExternalUrl, openProtectedExternalLink } from '../protectedLinks';
 import type { SyntaxPart, I18nText } from '../types';
 import { resolveVariableParts, resolveVariableText } from '../utils/variables';
 import SyntaxModal from './SyntaxModal';
@@ -28,7 +28,19 @@ function ToolDetail({ toolId }: ToolDetailProps) {
 
   const copyToClipboard = async (text: string, index: string) => {
     const processedText = resolveVariableText(text, globalVariables);
-    await navigator.clipboard.writeText(processedText);
+    try {
+      await navigator.clipboard.writeText(processedText);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = processedText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    }
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);
   };
@@ -69,7 +81,7 @@ function ToolDetail({ toolId }: ToolDetailProps) {
         <div className="external-tool-section">
           <div>
             <h3>{language === 'zh' ? '平台入口' : 'Platform Entry'}</h3>
-            <p>{language === 'zh' ? '这是系统内置的受保护外链入口，后台不能编辑或删除。' : 'This is a built-in protected external link and cannot be edited in the admin panel.'}</p>
+            <p>{language === 'zh' ? '这是默认提供的 Xeye 平台入口，部署管理员可在后台工具列表中删除。' : 'This default Xeye entry can be removed by the deployment administrator.'}</p>
           </div>
           <button
             className="external-open-btn"
@@ -157,7 +169,14 @@ function ToolDetail({ toolId }: ToolDetailProps) {
           <ul>
             {tool.references.map((ref, index) => (
               <li key={index}>
-                <a href={ref} target="_blank" rel="noopener noreferrer">{ref}</a>
+                <a
+                  href={ref}
+                  target="_blank"
+                  rel={isProtectedExternalUrl(ref) ? 'noopener' : 'noopener noreferrer'}
+                  referrerPolicy={isProtectedExternalUrl(ref) ? 'origin' : undefined}
+                >
+                  {ref}
+                </a>
               </li>
             ))}
           </ul>

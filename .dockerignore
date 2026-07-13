@@ -11,6 +11,8 @@ test-results
 screenshots
 docs
 reports
+artifacts
+output
 scripts/**
 !scripts/run-production-build.mjs
 tests

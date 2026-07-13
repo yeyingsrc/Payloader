@@ -1,0 +1,129 @@
+name: Client Shells
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-shells-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} shells
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            targets: win-x64-nsis,win-arm64-nsis,win-ia32-nsis
+          - platform: linux
+            os: ubuntu-latest
+            targets: linux-x64-appimage,linux-arm64-appimage,linux-armv7l-appimage
+          - platform: macos
+            os: macos-latest
+            targets: mac-x64-dmg,mac-arm64-dmg,mac-universal-dmg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build verified frontend
+        run: npm run build
+      - name: Build native client shells
+        env:
+          PAYLOADER_CLIENT_SHELL_TARGETS: ${{ matrix.targets }}
+          PAYLOADER_CLIENT_SHELL_OUTPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+          PAYLOADER_SHELL_WINDOWS_CSC_LINK: ${{ matrix.platform == 'windows' && secrets.WINDOWS_CSC_LINK || '' }}
+          PAYLOADER_SHELL_WINDOWS_CSC_KEY_PASSWORD: ${{ matrix.platform == 'windows' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          PAYLOADER_SHELL_MACOS_CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MACOS_CSC_LINK || '' }}
+          PAYLOADER_SHELL_MACOS_CSC_KEY_PASSWORD: ${{ matrix.platform == 'macos' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
+          PAYLOADER_SHELL_MACOS_APPLE_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_ID || '' }}
+          PAYLOADER_SHELL_MACOS_APP_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          PAYLOADER_SHELL_MACOS_TEAM_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
+        run: npm run build:client-shells
+      - name: Smoke native client shell
+        if: matrix.platform != 'linux'
+        env:
+          PAYLOADER_CLIENT_SHELL_OUTPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+        run: npm run verify:client-shell
+      - name: Smoke native Linux client shell
+        if: matrix.platform == 'linux'
+        env:
+          PAYLOADER_CLIENT_SHELL_OUTPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+        run: xvfb-run --auto-servernum npm run verify:client-shell
+      - name: Upload shell partials
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-shells-${{ matrix.platform }}
+          path: artifacts/client-shells/*
+          if-no-files-found: error
+          retention-days: 14
+
+  merge:
+    name: Merge shell manifest
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Download native shell artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: client-shells-*
+          path: artifacts/client-shells
+          merge-multiple: true
+      - name: Merge and validate shell manifest
+        env:
+          PAYLOADER_CLIENT_SHELL_INPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+          PAYLOADER_CLIENT_SHELL_OUTPUT_DIR: ${{ github.workspace }}/artifacts/client-shells
+        run: npm run merge:client-shells
+      - name: Upload complete shell release
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-shells-release
+          path: artifacts/client-shells/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish shell Release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download complete shell release
+        uses: actions/download-artifact@v4
+        with:
+          name: client-shells-release
+          path: artifacts/client-shells
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" artifacts/client-shells/* --clobber

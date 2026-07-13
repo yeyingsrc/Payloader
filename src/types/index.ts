@@ -95,6 +95,7 @@ export interface SiteSettings {
   logoIcon: string;
   logoUrl: string;
   projectUrl: string;
+  xeyeEnabled: boolean;
 }
 
 export interface PublicData {
@@ -128,6 +129,9 @@ export interface PublicClientBuildItem {
   minOsVersion?: string;
   installType?: string;
   packageManager?: string;
+  buildSource?: 'native-host' | 'official-shell' | string;
+  shellVersion?: string;
+  shellSha256?: string;
   performanceNotes?: string[];
   securityNotes?: string[];
   notes?: string[];
@@ -150,6 +154,9 @@ export interface PublicClientTargetInfo {
   installType?: string;
   packageManager?: string;
   requiresSigningNote?: string;
+  source?: 'native-host' | 'official-shell' | 'unavailable' | string;
+  shellVersion?: string;
+  shellSigned?: boolean;
 }
 
 export interface PublicClientBuildInfo {

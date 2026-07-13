@@ -9,7 +9,7 @@ const projectRoot = resolve(import.meta.dirname, '..');
 const serverEntrypoint = join(projectRoot, 'server', 'admin-server.mjs');
 const seedDatabase = join(projectRoot, 'server', 'default-seed.sqlite');
 
-const runServer = ({ dataDir, nodeEnv, host, username, password, waitForListening = false }) => new Promise((resolveRun, rejectRun) => {
+const runServer = ({ dataDir, nodeEnv, host, username, password, allowInsecureDefaults = false, waitForListening = false }) => new Promise((resolveRun, rejectRun) => {
   const env = {
     ...process.env,
     NODE_ENV: nodeEnv,
@@ -21,8 +21,10 @@ const runServer = ({ dataDir, nodeEnv, host, username, password, waitForListenin
   delete env.PAYLOADER_ADMIN_USER;
   delete env.PAYLOADER_ADMIN_PASSWORD;
   delete env.PAYLOADER_JWT_SECRET;
+  delete env.PAYLOADER_ALLOW_INSECURE_DEV_CREDENTIALS;
   if (username !== undefined) env.PAYLOADER_ADMIN_USER = username;
   if (password !== undefined) env.PAYLOADER_ADMIN_PASSWORD = password;
+  if (allowInsecureDefaults) env.PAYLOADER_ALLOW_INSECURE_DEV_CREDENTIALS = 'true';
 
   const child = spawn(process.execPath, [serverEntrypoint], {
     cwd: projectRoot,
@@ -32,6 +34,7 @@ const runServer = ({ dataDir, nodeEnv, host, username, password, waitForListenin
   });
   let output = '';
   let settled = false;
+  let listeningObserved = false;
   const finish = result => {
     if (settled) return;
     settled = true;
@@ -40,9 +43,9 @@ const runServer = ({ dataDir, nodeEnv, host, username, password, waitForListenin
   };
   const inspectOutput = chunk => {
     output += chunk.toString('utf8');
-    if (waitForListening && output.includes('Payloader frontend:')) {
+    if (waitForListening && !listeningObserved && output.includes('Payloader frontend:')) {
+      listeningObserved = true;
       child.kill();
-      finish({ listened: true, code: null });
     }
   };
   child.stdout.on('data', inspectOutput);
@@ -53,7 +56,7 @@ const runServer = ({ dataDir, nodeEnv, host, username, password, waitForListenin
     clearTimeout(timeout);
     rejectRun(error);
   });
-  child.once('exit', code => finish({ listened: false, code }));
+  child.once('exit', code => finish({ listened: listeningObserved, code }));
   const timeout = setTimeout(() => {
     child.kill();
     if (settled) return;
@@ -62,7 +65,22 @@ const runServer = ({ dataDir, nodeEnv, host, username, password, waitForListenin
   }, 15_000);
 });
 
-test('production startup rejects missing, weak, and bundled administrator credentials', async t => {
+test('all normal startups require explicit administrator credentials', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'payloader-startup-explicit-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const result = await runServer({
+    dataDir: root,
+    nodeEnv: 'development',
+    host: '127.0.0.1',
+    waitForListening: true,
+  });
+  assert.equal(result.listened, false);
+  assert.notEqual(result.code, 0);
+  assert.match(result.output, /are required/);
+});
+
+test('production startup rejects missing, weak, bundled, and documented example credentials', async t => {
   const root = await mkdtemp(join(tmpdir(), 'payloader-startup-policy-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -70,6 +88,7 @@ test('production startup rejects missing, weak, and bundled administrator creden
     { name: 'missing', username: undefined, password: undefined, message: /are required/ },
     { name: 'weak', username: 'admin', password: 'short', message: /密码长度/ },
     { name: 'bundled', username: 'admin', password: 'payloader-admin', message: /密码至少需要包含/ },
+    { name: 'documented', username: 'admin', password: 'Change-Me-2026!', message: /must not use a published example password/ },
   ];
 
   for (const item of cases) {
@@ -79,6 +98,7 @@ test('production startup rejects missing, weak, and bundled administrator creden
       host: '0.0.0.0',
       username: item.username,
       password: item.password,
+      waitForListening: true,
     });
     assert.notEqual(result.code, 0, `${item.name} credentials unexpectedly started the server`);
     assert.equal(result.listened, false);
@@ -86,7 +106,7 @@ test('production startup rejects missing, weak, and bundled administrator creden
   }
 });
 
-test('production startup rejects a bundled password persisted by an older local install', async t => {
+test('production startup rejects an old bundled password until explicit strong credentials migrate it', async t => {
   const root = await mkdtemp(join(tmpdir(), 'payloader-startup-persisted-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -94,6 +114,7 @@ test('production startup rejects a bundled password persisted by an older local 
     dataDir: root,
     nodeEnv: 'development',
     host: '127.0.0.1',
+    allowInsecureDefaults: true,
     waitForListening: true,
   });
   assert.equal(local.listened, true, local.output);
@@ -108,4 +129,22 @@ test('production startup rejects a bundled password persisted by an older local 
   assert.notEqual(production.code, 0);
   assert.equal(production.listened, false);
   assert.match(production.output, /bundled default password/);
+
+  const migrated = await runServer({
+    dataDir: root,
+    nodeEnv: 'production',
+    host: '0.0.0.0',
+    username: 'migrated-admin',
+    password: 'Migrated-Admin-Password-2026!',
+    waitForListening: true,
+  });
+  assert.equal(migrated.listened, true, migrated.output);
+
+  const persisted = await runServer({
+    dataDir: root,
+    nodeEnv: 'production',
+    host: '0.0.0.0',
+    waitForListening: true,
+  });
+  assert.equal(persisted.listened, true, persisted.output);
 });

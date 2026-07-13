@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useMemo, useCallback } from 'react';
+import { lazy, Suspense, useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
@@ -9,6 +9,7 @@ import { defaultGlobalVariables } from './data/globalVariables';
 import type { GlobalVariable, PublicClientBuildInfo, PublicData } from './types';
 import type { Language } from './i18n';
 import { getText } from './i18n';
+import { buildSearchIndex, matchSearchIndex } from './searchIndex';
 import './styles/global.css';
 
 const LazyEncodingTools = lazy(() => import('./components/EncodingTools'));
@@ -33,7 +34,28 @@ function App() {
   const [activeView, setActiveView] = useState<ActiveView>('workspace');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.matchMedia('(max-width: 900px)').matches);
   const [searchQuery, setSearchQuery] = useState('');
+  // The public language switch stays disabled until English content passes coverage checks.
+  const [language, setLanguage] = useState<Language>('zh');
+  const [settledSearchQuery, setSettledSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(settledSearchQuery);
+  const searchIndex = useMemo(
+    () => buildSearchIndex(allPayloads, allToolCommands, language),
+    [allPayloads, allToolCommands, language],
+  );
+  const searchMatches = useMemo(
+    () => matchSearchIndex(searchIndex, deferredSearchQuery),
+    [deferredSearchQuery, searchIndex],
+  );
   const closeSidebar = useCallback(() => setSidebarCollapsed(true), []);
+
+  useEffect(() => {
+    if (!searchQuery) {
+      setSettledSearchQuery('');
+      return;
+    }
+    const timer = window.setTimeout(() => setSettledSearchQuery(searchQuery), 120);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   // Theme with localStorage persistence
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -44,9 +66,6 @@ function App() {
       return 'dark';
     }
   });
-
-  // The public language switch stays disabled until English content passes coverage checks.
-  const [language, setLanguage] = useState<Language>('zh');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -191,6 +210,8 @@ function App() {
       setTheme,
       searchQuery,
       setSearchQuery,
+      deferredSearchQuery,
+      searchMatches,
       language,
       setLanguage
     }}>

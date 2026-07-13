@@ -1,9 +1,9 @@
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
 import * as sqlite from 'node:sqlite';
+import { publicProjectRoute } from './project-attribution.mjs';
 
 const { DatabaseSync } = sqlite;
 
@@ -30,63 +30,11 @@ const parseJson = value => {
   return JSON.parse(value);
 };
 
-const decodeProtectedText = values => String.fromCharCode(...values);
-const sha256 = value => createHash('sha256').update(value).digest('hex');
+const projectUrl = publicProjectRoute;
 
-const projectUrl = 'https://github.com/3516634930/Payloader';
-const projectUrlHash = '81ea9805f81db752f393d34fb1e82de2cd1c864efe6295f575ec87357ed7db0a';
-if (sha256(projectUrl) !== projectUrlHash) {
-  throw new Error('Payloader project attribution integrity check failed.');
-}
-
-const protectedExternalUrlBytes = [104, 116, 116, 112, 115, 58, 47, 47, 120, 115, 115, 46, 105, 99, 117, 47];
-const protectedXeyeLabelBytes = [88, 101, 121, 101];
-const protectedXssToolIdBytes = [120, 115, 115, 45, 112, 108, 97, 116, 102, 111, 114, 109];
-const protectedXssNavIdBytes = [115, 121, 115, 116, 101, 109, 45, 120, 115, 115, 45, 112, 108, 97, 116, 102, 111, 114, 109];
-const protectedExternalUrl = decodeProtectedText(protectedExternalUrlBytes);
-const protectedXeyeLabel = decodeProtectedText(protectedXeyeLabelBytes);
-const protectedXssToolId = decodeProtectedText(protectedXssToolIdBytes);
-const protectedXssNavId = decodeProtectedText(protectedXssNavIdBytes);
-const protectedIntegrity = {
-  externalUrl: 'a88e359debfc8c567dd7288676aa4b08024c5e387a014a8d1bf118eb04ff3ce8',
-  xeyeLabel: 'b3f143c18aab15be248603323861a5c63cb60f518cb22497324c12166c46910e',
-  xssToolId: '356e411d20044180aac158d731882acea5725fe87efbfc3753d6dbc69c585fab',
-  xssNavId: 'ff6ad38087a766bbf12f422aff97343b5b0dda5d4c5e948b2275de52431540ff',
-};
-
-const assertProtectedHash = (value, expected, label) => {
-  if (sha256(value) !== expected) {
-    throw new Error(`Payloader protected ${label} integrity check failed.`);
-  }
-};
-
-const verifyProtectedLinkSource = () => {
-  const protectedLinksSource = readFileSync(join(rootDir, 'src', 'protectedLinks.ts'), 'utf8');
-  const headerSource = readFileSync(join(rootDir, 'src', 'components', 'Header.tsx'), 'utf8');
-  const requiredProtectedLinkTokens = [
-    'xeyeUrlBytes',
-    protectedExternalUrlBytes.join(', '),
-    'protectedExternalLinks',
-    'openProtectedExternalLink',
-  ];
-  const requiredHeaderTokens = [
-    '../protectedLinks',
-    'protectedExternalLinks.xeye.href',
-    'protectedExternalLinks.xeye.label',
-  ];
-  if (
-    !requiredProtectedLinkTokens.every(token => protectedLinksSource.includes(token)) ||
-    !requiredHeaderTokens.every(token => headerSource.includes(token))
-  ) {
-    throw new Error('Payloader protected Xeye link source integrity check failed.');
-  }
-};
-
-assertProtectedHash(protectedExternalUrl, protectedIntegrity.externalUrl, 'external URL');
-assertProtectedHash(protectedXeyeLabel, protectedIntegrity.xeyeLabel, 'Xeye label');
-assertProtectedHash(protectedXssToolId, protectedIntegrity.xssToolId, 'XSS platform tool id');
-assertProtectedHash(protectedXssNavId, protectedIntegrity.xssNavId, 'XSS platform navigation id');
-verifyProtectedLinkSource();
+const protectedExternalUrl = 'https://xss.icu/';
+const protectedXssToolId = 'xss-platform';
+const protectedXssNavId = 'system-xss-platform';
 
 const defaultSettings = {
   siteTitle: { zh: 'PAYLOADER', en: 'PAYLOADER' },
@@ -100,7 +48,7 @@ const defaultSettings = {
 const protectedXssPlatformTool = Object.freeze({
   id: protectedXssToolId,
   name: { zh: 'XSS 平台', en: 'XSS Platform' },
-  description: { zh: '系统内置 Xeye 平台外链，点击后跳转到受保护的平台地址。', en: 'Built-in protected Xeye platform link.' },
+  description: { zh: 'Payloader 默认提供的 Xeye 平台入口。', en: 'Default Xeye platform entry provided by Payloader.' },
   category: { zh: '平台跳转', en: 'Platform Links' },
   commands: [],
   externalUrl: protectedExternalUrl,
@@ -114,6 +62,7 @@ const protectedXssPlatformNavigation = Object.freeze({
 });
 const systemToolIds = new Set([protectedXssToolId]);
 const systemNavigationNodeIds = new Set([protectedXssNavId]);
+const xeyeDisabledMetadataKey = 'xeye_platform_disabled';
 
 const protectedStoreError = message => {
   const error = new Error(message);
@@ -1679,7 +1628,11 @@ export const curateSeedData = seedData => {
   };
 };
 
-const insertPayloads = (database, payloads) => {
+const prepareContentItemForInsert = (item, sanitizer, trusted) => (
+  trusted ? parseJson(json(item)) : sanitizer(item)
+);
+
+const insertPayloads = (database, payloads, { trusted = false } = {}) => {
   const statement = database.prepare(`
     INSERT INTO payloads (id, data, sort_order, enabled, created_at, updated_at)
     VALUES (?, ?, ?, 1, ?, ?)
@@ -1687,7 +1640,7 @@ const insertPayloads = (database, payloads) => {
   const timestamp = now();
   const usedIds = new Set();
   payloads.forEach((payload, index) => {
-    const normalized = sanitizePayload(payload);
+    const normalized = prepareContentItemForInsert(payload, sanitizePayload, trusted);
     if (usedIds.has(normalized.id)) {
       normalized.id = `${normalized.id}-${index}`;
     }
@@ -1696,7 +1649,7 @@ const insertPayloads = (database, payloads) => {
   });
 };
 
-const insertTools = (database, tools) => {
+const insertTools = (database, tools, { trusted = false } = {}) => {
   const statement = database.prepare(`
     INSERT INTO tools (id, data, sort_order, enabled, created_at, updated_at)
     VALUES (?, ?, ?, 1, ?, ?)
@@ -1704,7 +1657,7 @@ const insertTools = (database, tools) => {
   const timestamp = now();
   const usedIds = new Set();
   tools.forEach((tool, index) => {
-    const normalized = sanitizeTool(tool);
+    const normalized = prepareContentItemForInsert(tool, sanitizeTool, trusted);
     if (usedIds.has(normalized.id)) {
       normalized.id = `${normalized.id}-${index}`;
     }
@@ -1713,7 +1666,7 @@ const insertTools = (database, tools) => {
   });
 };
 
-const insertNavigation = (database, navigation, toolNavigation = []) => {
+const insertNavigation = (database, navigation, toolNavigation = [], { trusted = false } = {}) => {
   const statement = database.prepare(`
     INSERT INTO navigation_nodes (id, tree, kind, sort_order, enabled, created_at, updated_at)
     VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -1721,7 +1674,7 @@ const insertNavigation = (database, navigation, toolNavigation = []) => {
   const timestamp = now();
   const usedIds = new Set();
   navigation.forEach((item, index) => {
-    const normalized = sanitizeNavItem(item);
+    const normalized = prepareContentItemForInsert(item, sanitizeNavItem, trusted);
     if (usedIds.has(normalized.id)) {
       normalized.id = `${normalized.id}-${index}`;
     }
@@ -1729,7 +1682,7 @@ const insertNavigation = (database, navigation, toolNavigation = []) => {
     statement.run(normalized.id, json(normalized), 'payloads', index, timestamp, timestamp);
   });
   toolNavigation.forEach((item, index) => {
-    const normalized = sanitizeNavItem(item);
+    const normalized = prepareContentItemForInsert(item, sanitizeNavItem, trusted);
     if (usedIds.has(normalized.id)) {
       normalized.id = `${normalized.id}-${index}`;
     }
@@ -1755,13 +1708,13 @@ const insertNavigationKind = (database, navigation, kind) => {
   });
 };
 
-const replaceContentData = (database, seedData) => {
+const replaceContentData = (database, seedData, { trusted = false } = {}) => {
   database.prepare('DELETE FROM payloads').run();
   database.prepare('DELETE FROM tools').run();
   database.prepare('DELETE FROM navigation_nodes').run();
-  insertPayloads(database, normalizeList(seedData.payloads));
-  insertTools(database, normalizeList(seedData.tools));
-  insertNavigation(database, normalizeList(seedData.navigation), normalizeList(seedData.toolNavigation));
+  insertPayloads(database, normalizeList(seedData.payloads), { trusted });
+  insertTools(database, normalizeList(seedData.tools), { trusted });
+  insertNavigation(database, normalizeList(seedData.navigation), normalizeList(seedData.toolNavigation), { trusted });
 };
 
 export const writeDefaultSeedDatabase = async (seedData, file = defaultSeedDbFile, source = 'database content seed') => {
@@ -2242,6 +2195,22 @@ const migratePayloadContentPresentation = database => {
   }
 };
 
+export const seedIncludedMigrationKeys = Object.freeze([
+  'migration_file_upload_basic',
+  'migration_remove_edr_evasion',
+  'migration_scrub_retired_edr_text',
+  'migration_restore_all_payload_public_data_v1',
+  'migration_business_logic_quality_v1',
+  'migration_jwt_security_navigation_v1',
+  'migration_payload_quality_defaults_v1',
+  'migration_payload_quality_context_v2',
+  'migration_payload_domain_quality_v3',
+  'migration_extended_burp_dictionary_payloads_v1',
+  'migration_payload_content_presentation_v4',
+  'migration_missing_default_tools_v3',
+  'migration_project_attribution_v1',
+]);
+
 const applyDataMigrations = async database => {
   const defaults = await loadDefaultData();
   const uploadBasicPayload = findById(defaults.payloads, 'file-upload-basic');
@@ -2453,17 +2422,31 @@ const applyDataMigrations = async database => {
       writeMetadata(database, 'migration_missing_default_tools_v3_at', now());
     });
   }
+
+  if (readMetadata(database, 'migration_project_attribution_v1') !== '1') {
+    runTransaction(database, () => {
+      const settings = sanitizeSettings(readJsonMetadata(database, 'settings', defaultSettings));
+      writeMetadata(database, 'settings', json(settings));
+      writeMetadata(database, 'migration_project_attribution_v1', '1');
+      writeMetadata(database, 'migration_project_attribution_v1_at', now());
+    });
+  }
 };
 
 const seedIfNeeded = async database => {
   if (readMetadata(database, 'seeded') === '1') return;
   const defaults = await loadDefaultData();
   runTransaction(database, () => {
-    replaceContentData(database, defaults);
+    const timestamp = now();
+    replaceContentData(database, defaults, { trusted: true });
     writeMetadata(database, 'settings', json(defaultSettings));
     writeMetadata(database, 'seeded', '1');
-    writeMetadata(database, 'seeded_at', now());
+    writeMetadata(database, 'seeded_at', timestamp);
     writeMetadata(database, 'schema_version', '1');
+    for (const migrationKey of seedIncludedMigrationKeys) {
+      writeMetadata(database, migrationKey, '1');
+      writeMetadata(database, `${migrationKey}_at`, timestamp);
+    }
   });
 };
 
@@ -2494,16 +2477,21 @@ const readResetState = database => ({
     .map(pruneSystemNavigationItem)
     .filter(Boolean),
   settings: sanitizeSettings(readJsonMetadata(database, 'settings', defaultSettings)),
+  xeyeEnabled: isXeyeEnabled(database),
 });
 
 const makeSeedResetState = defaults => ({
-  payloads: normalizeList(defaults.payloads).map(sanitizePayload),
-  tools: normalizeList(defaults.tools).map(sanitizeTool).filter(item => !isSystemToolId(item.id)),
-  navigation: normalizeList(defaults.navigation).map(sanitizeNavItem),
-  toolNavigation: normalizeList(defaults.toolNavigation).map(sanitizeNavItem)
+  payloads: normalizeList(defaults.payloads).map(item => prepareContentItemForInsert(item, sanitizePayload, true)),
+  tools: normalizeList(defaults.tools)
+    .map(item => prepareContentItemForInsert(item, sanitizeTool, true))
+    .filter(item => !isSystemToolId(item.id)),
+  navigation: normalizeList(defaults.navigation).map(item => prepareContentItemForInsert(item, sanitizeNavItem, true)),
+  toolNavigation: normalizeList(defaults.toolNavigation)
+    .map(item => prepareContentItemForInsert(item, sanitizeNavItem, true))
     .map(pruneSystemNavigationItem)
     .filter(Boolean),
   settings: sanitizeSettings(defaultSettings),
+  xeyeEnabled: true,
 });
 
 const countResetState = state => ({
@@ -2556,6 +2544,14 @@ const createResetImpact = (target, beforeState, seedState) => {
       settings: {
         affected: affectedSet.has('settings'),
         changed: json(beforeState.settings) !== json(seedState.settings),
+      },
+    },
+    integrations: {
+      xeye: {
+        affected: affectedSet.has('tools'),
+        before: beforeState.xeyeEnabled,
+        seed: seedState.xeyeEnabled,
+        changed: affectedSet.has('tools') && beforeState.xeyeEnabled !== seedState.xeyeEnabled,
       },
     },
   };
@@ -2663,15 +2659,16 @@ export const resetDefaultData = value => {
       const timestamp = now();
       if (target === 'all' || target === 'payloads') {
         database.prepare('DELETE FROM payloads').run();
-        insertPayloads(database, seedState.payloads);
+        insertPayloads(database, seedState.payloads, { trusted: true });
       }
       if (target === 'all' || target === 'tools') {
         database.prepare('DELETE FROM tools').run();
-        insertTools(database, seedState.tools);
+        insertTools(database, seedState.tools, { trusted: true });
+        writeMetadata(database, xeyeDisabledMetadataKey, '0');
       }
       if (target === 'all' || target === 'navigation') {
         database.prepare('DELETE FROM navigation_nodes').run();
-        insertNavigation(database, seedState.navigation, seedState.toolNavigation);
+        insertNavigation(database, seedState.navigation, seedState.toolNavigation, { trusted: true });
       }
       if (target === 'all' || target === 'settings') {
         writeMetadata(database, 'settings', json(seedState.settings));
@@ -2889,10 +2886,12 @@ const withProtectedSystemToolNavigation = navigation => [
   ...normalizeList(navigation).map(pruneSystemNavigationItem).filter(Boolean),
 ];
 
+const isXeyeEnabled = database => readMetadata(database, xeyeDisabledMetadataKey) !== '1';
+
 const assertMutableAdminItem = (resource, idOrItem) => {
   const id = isObject(idOrItem) ? idOrItem.id : idOrItem;
   if (resource === 'tools' && isSystemToolId(id)) {
-    throw protectedStoreError('系统内置 XSS 平台不可在后台编辑、移动或删除。');
+    throw protectedStoreError('默认 XSS 平台入口不可编辑或移动，可在工具列表中删除。');
   }
   if (resource === 'navigation') {
     if (isSystemNavigationNodeId(id) || navigationTouchesSystemItem(idOrItem)) {
@@ -3237,8 +3236,55 @@ export const previewImportPackage = value => {
   };
 };
 
+const demoPlaceholderValues = new Set([
+  'echo todo',
+  'new payload',
+  '新 payload',
+  'new tool',
+  '新工具',
+  'new command',
+  '新命令',
+  'uncategorized',
+  '未分类',
+]);
+
+const findDemoPlaceholder = value => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return demoPlaceholderValues.has(normalized) ? value.trim() : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findDemoPlaceholder(item);
+      if (match) return match;
+    }
+    return null;
+  }
+  if (isObject(value)) {
+    for (const item of Object.values(value)) {
+      const match = findDemoPlaceholder(item);
+      if (match) return match;
+    }
+  }
+  return null;
+};
+
+const assertNoDemoPlaceholderContent = value => {
+  const placeholder = findDemoPlaceholder(value);
+  if (!placeholder) return;
+  const error = new Error(`检测到未完成的占位内容：${placeholder}`);
+  error.status = 400;
+  throw error;
+};
+
 export const importDataPackage = async (value, options = {}) => {
   const normalized = normalizeImportPackage(value);
+  assertNoDemoPlaceholderContent([
+    ...normalized.payloads,
+    ...normalized.tools,
+    ...normalized.navigation,
+    ...normalized.toolNavigation,
+  ]);
   const mode = options.mode === 'replace' ? 'replace' : 'merge';
   return enqueueMutation(async () => {
     const database = await getDb();
@@ -3284,31 +3330,40 @@ export const importDataPackage = async (value, options = {}) => {
 export const getPublicData = async () => {
   if (publicDataCache) return publicDataCache;
   const database = await getDb();
-  const settings = sanitizeSettings(readJsonMetadata(database, 'settings', defaultSettings));
+  const xeyeEnabled = isXeyeEnabled(database);
+  const settings = {
+    ...sanitizeSettings(readJsonMetadata(database, 'settings', defaultSettings)),
+    xeyeEnabled,
+  };
   const payloads = rowsToItems(database.prepare('SELECT data FROM payloads WHERE enabled = 1 ORDER BY sort_order, id').all());
   const tools = rowsToItems(database.prepare('SELECT data FROM tools WHERE enabled = 1 ORDER BY sort_order, id').all());
   const navigation = rowsToItems(database.prepare("SELECT tree FROM navigation_nodes WHERE enabled = 1 AND kind = 'payloads' ORDER BY sort_order, id").all());
   const toolNavigation = rowsToItems(database.prepare("SELECT tree FROM navigation_nodes WHERE enabled = 1 AND kind = 'tools' ORDER BY sort_order, id").all());
   const publicPayloadData = prepareStoredPublicPayloadData(payloads, navigation);
-  const publicTools = withProtectedSystemTools(
-    tools
-      .filter(item => !excludedPublicToolIds.has(item.id))
-      .map(item => sanitizeTool(item))
-  );
+  const storedPublicTools = tools
+    .filter(item => !excludedPublicToolIds.has(item.id))
+    .map(item => sanitizeTool(item));
+  const publicTools = xeyeEnabled ? withProtectedSystemTools(storedPublicTools) : storedPublicTools;
   const toolIds = new Set(publicTools.map(item => item.id));
   publicDataCache = {
     settings,
     payloads: publicPayloadData.payloads,
     tools: publicTools,
     navigation: publicPayloadData.navigation,
-    toolNavigation: filterToolNavigation(withProtectedSystemToolNavigation(toolNavigation), toolIds),
+    toolNavigation: filterToolNavigation(
+      xeyeEnabled ? withProtectedSystemToolNavigation(toolNavigation) : toolNavigation,
+      toolIds,
+    ),
   };
   return publicDataCache;
 };
 
 export const getSettings = async () => {
   const database = await getDb();
-  return sanitizeSettings(readJsonMetadata(database, 'settings', defaultSettings));
+  return {
+    ...sanitizeSettings(readJsonMetadata(database, 'settings', defaultSettings)),
+    xeyeEnabled: isXeyeEnabled(database),
+  };
 };
 
 export const saveSettings = async value => {
@@ -3318,7 +3373,7 @@ export const saveSettings = async value => {
     writeMetadata(database, 'settings', json(settings));
     writeMetadata(database, 'settings_updated_at', now());
     invalidatePublicDataCache();
-    return settings;
+    return { ...settings, xeyeEnabled: isXeyeEnabled(database) };
   });
 };
 
@@ -3328,8 +3383,9 @@ export const listAdminItems = async resource => {
     return rowsToItems(database.prepare('SELECT data FROM payloads ORDER BY sort_order, id').all());
   }
   if (resource === 'tools') {
-    return rowsToItems(database.prepare('SELECT data FROM tools ORDER BY sort_order, id').all())
+    const items = rowsToItems(database.prepare('SELECT data FROM tools ORDER BY sort_order, id').all())
       .filter(item => !isSystemToolId(item.id));
+    return isXeyeEnabled(database) ? withProtectedSystemTools(items) : items;
   }
   if (resource === 'navigation') {
     return database.prepare('SELECT id, tree, kind, sort_order AS sortOrder, enabled FROM navigation_nodes ORDER BY kind, sort_order, id')
@@ -3344,6 +3400,162 @@ export const listAdminItems = async resource => {
   throw new Error(`Unsupported resource: ${resource}`);
 };
 
+export const listCustomPayloads = async () => {
+  const database = await getDb();
+  return rowsToItems(database.prepare(`
+    SELECT data
+    FROM payloads
+    WHERE id LIKE 'custom-%'
+      OR json_extract(data, '$.category.zh') = '自定义'
+      OR json_extract(data, '$.category.en') = 'Custom'
+    ORDER BY sort_order, id
+  `).all());
+};
+
+const customContentDestinations = new Set(['payloads', 'tools']);
+
+const customContentError = (status, message) => {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+};
+
+const requireCustomDestination = value => {
+  const destination = String(value || '');
+  if (!customContentDestinations.has(destination)) {
+    throw customContentError(400, '自定义内容归属无效');
+  }
+  return destination;
+};
+
+const normalizeCustomContentInput = value => {
+  const candidate = isObject(value) ? value : {};
+  const title = String(candidate.title || '').trim();
+  const content = String(candidate.content || '').trim();
+  if (!title) throw customContentError(400, '请填写标题');
+  if (!content) throw customContentError(400, '请填写内容');
+  return {
+    id: String(candidate.id || '').trim(),
+    title,
+    content,
+    destination: requireCustomDestination(candidate.destination),
+    sourceDestination: candidate.sourceDestination == null
+      ? null
+      : requireCustomDestination(candidate.sourceDestination),
+  };
+};
+
+const isCustomContentItem = item => {
+  const category = ensureDisplayTextObject(item?.category);
+  return String(item?.id || '').startsWith('custom-')
+    || category.zh === '自定义'
+    || category.en === 'Custom';
+};
+
+const customContentView = (item, destination) => ({
+  id: item.id,
+  title: textValue(item.name).trim(),
+  content: destination === 'tools'
+    ? String(item.commands?.[0]?.command || '')
+    : String(item.execution?.[0]?.command || ''),
+  destination,
+});
+
+const customItemForDestination = ({ id, title, content, destination }) => (
+  destination === 'tools'
+    ? sanitizeTool({
+        id,
+        name: { zh: title, en: title },
+        description: { zh: `自定义：${title}`, en: `Custom: ${title}` },
+        category: { zh: '自定义', en: 'Custom' },
+        commands: [{
+          name: { zh: title, en: title },
+          command: content,
+          description: { zh: '自定义内容', en: 'Custom content' },
+          platform: 'all',
+        }],
+        references: [],
+      })
+    : sanitizePayload({
+        id,
+        name: { zh: title, en: title },
+        description: { zh: `自定义：${title}`, en: `Custom: ${title}` },
+        category: { zh: '自定义', en: 'Custom' },
+        tags: ['custom'],
+        prerequisites: [],
+        execution: [{
+          title: { zh: title, en: title },
+          command: content,
+          description: { zh: '自定义内容', en: 'Custom content' },
+          platform: 'all',
+        }],
+        wafBypass: [],
+      })
+);
+
+export const listCustomContent = async () => {
+  const database = await getDb();
+  const payloads = rowsToItems(database.prepare('SELECT data FROM payloads ORDER BY sort_order, id').all())
+    .filter(isCustomContentItem)
+    .map(item => customContentView(item, 'payloads'));
+  const tools = rowsToItems(database.prepare('SELECT data FROM tools ORDER BY sort_order, id').all())
+    .filter(item => !isSystemToolId(item.id) && isCustomContentItem(item))
+    .map(item => customContentView(item, 'tools'));
+  return [...payloads, ...tools];
+};
+
+export const saveCustomContent = async value => {
+  const input = normalizeCustomContentInput(value);
+  const id = input.id || makeId('custom', input.title);
+  const item = customItemForDestination({ ...input, id });
+  assertMutableAdminItem(input.destination, item);
+  assertNoDemoPlaceholderContent(item);
+
+  return enqueueMutation(async () => {
+    const database = await getDb();
+    const source = input.sourceDestination || input.destination;
+    const sourceTable = tableForResource(source).table;
+    const targetTable = tableForResource(input.destination).table;
+    const moving = source !== input.destination;
+    const sourceRow = input.id
+      ? database.prepare(`SELECT data FROM ${sourceTable} WHERE id = ?`).get(id)
+      : null;
+    const sourceItem = sourceRow ? parseJson(sourceRow.data) : null;
+    if (input.id && (!sourceItem || !isCustomContentItem(sourceItem))) {
+      throw customContentError(404, '自定义内容不存在');
+    }
+    if (moving && database.prepare(`SELECT id FROM ${targetTable} WHERE id = ?`).get(id)) {
+      throw customContentError(409, '目标栏目已存在相同 ID 的内容');
+    }
+
+    runTransaction(database, () => {
+      upsertItems(database, input.destination, [item]);
+      if (moving) database.prepare(`DELETE FROM ${sourceTable} WHERE id = ?`).run(id);
+    });
+    invalidatePublicDataCache();
+    return customContentView(item, input.destination);
+  });
+};
+
+export const deleteCustomContent = async value => {
+  const id = String(value?.id || '').trim();
+  const destination = requireCustomDestination(value?.destination);
+  if (!id) throw customContentError(400, '缺少自定义内容 ID');
+  assertMutableAdminItem(destination, id);
+  return enqueueMutation(async () => {
+    const database = await getDb();
+    const table = tableForResource(destination).table;
+    const row = database.prepare(`SELECT data FROM ${table} WHERE id = ?`).get(id);
+    const item = row ? parseJson(row.data) : null;
+    if (!item || !isCustomContentItem(item)) {
+      throw customContentError(404, '自定义内容不存在');
+    }
+    database.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    invalidatePublicDataCache();
+    return { ok: true };
+  });
+};
+
 const tableForResource = resource => {
   if (resource === 'payloads') return { table: 'payloads', dataColumn: 'data', sanitizer: sanitizePayload };
   if (resource === 'tools') return { table: 'tools', dataColumn: 'data', sanitizer: sanitizeTool };
@@ -3354,6 +3566,7 @@ export const saveAdminItem = async (resource, item) => {
   const { table, dataColumn, sanitizer } = tableForResource(resource);
   const normalized = sanitizer(item);
   assertMutableAdminItem(resource, normalized);
+  assertNoDemoPlaceholderContent(normalized);
   return enqueueMutation(async () => {
     const database = await getDb();
     const timestamp = now();
@@ -3395,6 +3608,14 @@ export const saveNavigationItem = async item => {
 
 export const deleteAdminItem = async (resource, id) => {
   if (!id) throw new Error('Missing id');
+  if (resource === 'tools' && isSystemToolId(id)) {
+    return enqueueMutation(async () => {
+      const database = await getDb();
+      writeMetadata(database, xeyeDisabledMetadataKey, '1');
+      writeMetadata(database, `${xeyeDisabledMetadataKey}_at`, now());
+      invalidatePublicDataCache();
+    });
+  }
   assertMutableAdminItem(resource, id);
   return enqueueMutation(async () => {
     const database = await getDb();

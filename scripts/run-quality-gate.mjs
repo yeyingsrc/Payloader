@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 
 const steps = [
+  'verify:attribution',
   'typecheck',
   'lint',
   'verify:codec',
+  'curate:content',
   'verify:content',
   'test',
   'build',

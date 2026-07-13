@@ -1,39 +1,40 @@
 const modules = {
   settings: {
     title: '站点设置',
-    desc: '',
     api: '/api/admin/settings',
     reset: 'settings',
   },
   payloads: {
     title: 'Payload 管理',
-    desc: '管理前台 Payload 的基础信息、命令、教程、分析和引用。',
     api: '/api/admin/payloads',
     reset: 'payloads',
   },
   tools: {
     title: '工具命令管理',
-    desc: '管理工具分类、安装方式、常用命令和参考链接。',
     api: '/api/admin/tools',
     reset: 'tools',
   },
   navigation: {
     title: '导航树管理',
-    desc: '管理前台左侧导航树的根节点、子节点和绑定目标。',
     api: '/api/admin/navigation',
     reset: 'navigation',
   },
   clientBuilds: {
     title: '客户端生成',
-    desc: '生成只包含前台页面和公开数据的 Payloader 多平台桌面客户端。',
     api: '/api/admin/client-builds',
+  },
+  updates: {
+    title: '系统更新',
+    api: '/api/admin/version-status',
   },
   account: {
     title: '账号安全',
-    desc: '修改后台管理员用户名和登录密码。',
     api: '/api/admin/credentials',
   },
 };
+
+const itemListPageSize = 120;
+const adminTokenStorageKey = 'payloader-admin-access-token';
 
 const state = {
   module: 'settings',
@@ -44,6 +45,7 @@ const state = {
   selectedId: null,
   query: '',
   group: '',
+  visibleItemLimit: itemListPageSize,
   draft: null,
   dirty: false,
   loading: true,
@@ -66,8 +68,10 @@ const state = {
   clientBuildSelectedTargets: null,
   clientBuildLoading: false,
   clientBuildGenerating: false,
+  versionStatus: null,
+  versionChecking: false,
   account: null,
-  csrfToken: sessionStorage.getItem('payloader-admin-csrf') || '',
+  accessToken: sessionStorage.getItem(adminTokenStorageKey) || '',
   navCollapsed: localStorage.getItem('payloader-admin-nav-collapsed') === '1',
 };
 
@@ -83,7 +87,7 @@ const getText = value => {
   const t = text(value);
   return t.zh || t.en || '';
 };
-const makeText = (zh, en) => ({ zh: String(zh || '').trim(), en: String(en || zh || '').trim() });
+const makeText = (zh, en) => ({ zh: String(zh || '').trim(), en: String(en || '').trim() });
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -130,7 +134,7 @@ const renderLogoUploadMeta = logoUrl => {
 };
 
 const moduleConfig = () => modules[state.module];
-const singletonModules = new Set(['settings', 'clientBuilds', 'account']);
+const singletonModules = new Set(['settings', 'clientBuilds', 'updates', 'account']);
 const isSingletonModule = () => singletonModules.has(state.module);
 const activeItems = () => isSingletonModule() ? [] : (state[state.module] || []);
 const selectedItem = () => state.module === 'settings'
@@ -144,6 +148,7 @@ const moduleLabels = {
 };
 
 moduleLabels.clientBuilds = '客户端生成';
+moduleLabels.updates = '系统更新';
 
 moduleLabels.account = '账号安全';
 
@@ -215,7 +220,8 @@ const sectionOpenDefault = (title, index) => {
 const updateSaveState = () => {
   const node = $('save-state');
   if (!node) return;
-  node.className = 'save-state';
+  const readOnlyStatusModule = state.module === 'clientBuilds' || state.module === 'updates';
+  node.className = `save-state${readOnlyStatusModule ? ' hidden' : ''}`;
   if (state.loading) {
     node.textContent = '正在加载';
     node.classList.add('loading');
@@ -237,11 +243,9 @@ const updateSaveState = () => {
   }
 };
 
-const isStateChangingMethod = method => !['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase());
-
 const redirectToLogin = () => {
-  sessionStorage.removeItem('payloader-admin-csrf');
-  state.csrfToken = '';
+  sessionStorage.removeItem(adminTokenStorageKey);
+  state.accessToken = '';
   window.location.replace('/admin/login');
 };
 
@@ -251,13 +255,10 @@ const adminFetch = async (url, options = {}) => {
   if (options.body !== undefined && !headers['content-type'] && !headers['Content-Type']) {
     headers['content-type'] = 'application/json';
   }
-  if (isStateChangingMethod(method) && state.csrfToken) {
-    headers['x-payloader-csrf'] = state.csrfToken;
-  }
+  if (state.accessToken) headers.authorization = `Bearer ${state.accessToken}`;
   return fetch(apiUrl(url), {
     ...options,
     method,
-    credentials: 'same-origin',
     headers,
   });
 };
@@ -301,14 +302,7 @@ const loadSession = async () => {
     throw new Error('Session expired, please sign in again');
   }
   if (!response.ok) throw new Error(await readResponseError(response));
-  const session = await response.json();
-  state.csrfToken = session.csrfToken || '';
-  if (state.csrfToken) {
-    sessionStorage.setItem('payloader-admin-csrf', state.csrfToken);
-  } else {
-    sessionStorage.removeItem('payloader-admin-csrf');
-  }
-  return session;
+  return response.json();
 };
 
 const logoutAdmin = async () => {
@@ -596,27 +590,27 @@ const defaultSettings = () => ({
 });
 
 const defaultCommand = (target = 'tool') => {
-  const label = { zh: '新命令', en: 'New command' };
+  const label = { zh: '', en: '' };
   return {
     ...(target === 'payload' ? { title: label, requiresAdmin: false } : { name: label, examples: [] }),
     description: { zh: '', en: '' },
-    command: 'echo TODO',
+    command: '',
     platform: 'all',
     syntaxBreakdown: [],
   };
 };
 
 const defaultAttackChainStep = () => ({
-  title: { zh: '新步骤', en: 'New step' },
+  title: { zh: '', en: '' },
   description: { zh: '', en: '' },
   payload: '',
 });
 
 const defaultPayload = () => ({
   id: `payload-${crypto.randomUUID().slice(0, 8)}`,
-  name: { zh: '新 Payload', en: 'New Payload' },
+  name: { zh: '', en: '' },
   description: { zh: '', en: '' },
-  category: { zh: '未分类', en: 'Uncategorized' },
+  category: { zh: '', en: '' },
   subCategory: { zh: '', en: '' },
   tags: [],
   prerequisites: [],
@@ -637,9 +631,9 @@ const defaultPayload = () => ({
 
 const defaultTool = () => ({
   id: `tool-${crypto.randomUUID().slice(0, 8)}`,
-  name: { zh: '新工具', en: 'New tool' },
+  name: { zh: '', en: '' },
   description: { zh: '', en: '' },
-  category: { zh: '未分类', en: 'Uncategorized' },
+  category: { zh: '', en: '' },
   commands: [defaultCommand('tool')],
   installation: { zh: '', en: '' },
   references: [],
@@ -647,7 +641,7 @@ const defaultTool = () => ({
 
 const defaultNav = () => ({
   id: `nav-${crypto.randomUUID().slice(0, 8)}`,
-  name: { zh: '新导航', en: 'New navigation' },
+  name: { zh: '', en: '' },
   kind: 'payloads',
   icon: '',
   children: [],
@@ -735,7 +729,7 @@ const currentEditorTitle = () => {
 };
 
 const currentEditorMeta = () => {
-  if (isSingletonModule()) return moduleConfig().desc;
+  if (isSingletonModule()) return '';
   const item = state.draft || selectedItem();
   return [item?.id, itemSummary(item)].filter(Boolean).join(' · ') || moduleConfig().title;
 };
@@ -746,7 +740,10 @@ const updateEditorHead = () => {
   const metaNode = $('editor-meta');
   if (moduleNode) moduleNode.textContent = moduleLabels[state.module] || moduleConfig().title;
   if (titleNode) titleNode.textContent = currentEditorTitle();
-  if (metaNode) metaNode.textContent = currentEditorMeta();
+  if (metaNode) {
+    metaNode.textContent = currentEditorMeta();
+    metaNode.hidden = !metaNode.textContent;
+  }
 };
 
 const updateMobileEditorHead = () => {
@@ -754,7 +751,10 @@ const updateMobileEditorHead = () => {
   const metaNode = $('mobile-item-meta');
   const backButton = $('mobile-back-list');
   if (titleNode) titleNode.textContent = currentEditorTitle();
-  if (metaNode) metaNode.textContent = currentEditorMeta();
+  if (metaNode) {
+    metaNode.textContent = currentEditorMeta();
+    metaNode.hidden = !metaNode.textContent;
+  }
   if (backButton) backButton.disabled = isSingletonModule();
 };
 
@@ -1103,6 +1103,142 @@ const formatBuildDate = value => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 };
 
+const formatVersionDate = (value, fallback = '尚未检查') => {
+  if (!value) return fallback;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+};
+
+const versionStatePresentation = value => ({
+  idle: ['neutral', '等待检查'],
+  checking: ['checking', '正在检查'],
+  'update-available': ['warning', '发现新版本'],
+  'source-update-available': ['warning', '源码有更新'],
+  'up-to-date': ['success', '已是最新版本'],
+  'local-newer': ['success', '本地版本领先'],
+  checked: ['neutral', '检查完成'],
+  error: ['danger', '检查失败'],
+}[value] || ['neutral', '状态未知']);
+
+const stableStateLabel = value => ({
+  'update-available': '有新正式版本',
+  'up-to-date': '版本一致',
+  'local-newer': '本地版本更高',
+  unavailable: '尚未正式发布',
+  unchecked: '尚未检查',
+  unknown: '无法比较',
+}[value] || '等待确认');
+
+const sourceStateLabel = value => ({
+  synchronized: '提交一致',
+  'remote-ahead': '官方分支有新提交',
+  'local-ahead': '本地提交领先',
+  diverged: '分支已产生差异',
+  unrelated: '无法确认提交关系',
+  'unknown-local-commit': '本地提交号未记录',
+  unchecked: '尚未检查',
+}[value] || '等待确认');
+
+const stableSourceLabel = value => ({
+  release: 'GitHub Release',
+  tag: 'Git 标签',
+  package: '远端 package.json',
+}[value] || '暂无来源');
+
+const safeProjectRoute = value => /^\/api\/r\/[A-Za-z0-9/_-]+$/.test(String(value || ''))
+  ? String(value)
+  : '/api/r/p';
+
+const renderVersionUpdateCenter = () => {
+  const status = state.versionStatus || {};
+  const installed = status.installed || {};
+  const stable = status.stable || {};
+  const source = status.source || {};
+  const error = status.error || null;
+  const [tone, label] = versionStatePresentation(state.versionChecking ? 'checking' : status.state);
+  const checking = state.versionChecking || status.state === 'checking';
+  const rateLimit = status.rateLimit || {};
+  const projectRoute = safeProjectRoute(status.projectRoute);
+  const stableVersion = !stable.developmentMetadata && stable.version ? `v${stable.version}` : '未发布';
+  const stableChannelSource = stable.developmentMetadata
+    ? '未发现 Release / Tag'
+    : stableSourceLabel(stable.source);
+  const installedVersion = installed.version ? `v${installed.version}` : '未知';
+  const body = `
+    <div class="version-update-shell">
+      <section class="version-update-summary" data-tone="${escapeHtml(tone)}">
+        <div>
+          <h3>${escapeHtml(label)}</h3>
+        </div>
+        <div class="version-update-actions">
+          <button class="btn primary" type="button" data-action="check-version" ${checking ? 'disabled' : ''}>
+            ${checking ? '正在检查' : '立即检查'}
+          </button>
+          <a class="btn" href="${escapeHtml(projectRoute)}" target="_blank" rel="noopener">查看官方项目</a>
+        </div>
+      </section>
+
+      <div class="version-update-grid">
+        <section class="version-update-panel">
+          <header>
+            <span>当前部署</span>
+            <strong>${escapeHtml(installedVersion)}</strong>
+          </header>
+          <dl>
+            <div><dt>提交</dt><dd><code>${escapeHtml(installed.commitShort || '未记录')}</code></dd></div>
+            <div><dt>源码状态</dt><dd>${escapeHtml(sourceStateLabel(source.state))}</dd></div>
+          </dl>
+        </section>
+
+        <section class="version-update-panel">
+          <header>
+            <span>官方发布版本</span>
+            <strong>${escapeHtml(stableVersion)}</strong>
+          </header>
+          <dl>
+            <div><dt>发布状态</dt><dd>${escapeHtml(stableStateLabel(stable.state))}</dd></div>
+            <div><dt>版本来源</dt><dd>${escapeHtml(stableChannelSource)}</dd></div>
+            <div><dt>发布时间</dt><dd>${escapeHtml(formatVersionDate(stable.publishedAt, '未发布'))}</dd></div>
+          </dl>
+        </section>
+
+        <section class="version-update-panel">
+          <header>
+            <span>默认分支源码</span>
+            <strong>${escapeHtml(source.branch || '未获取')}</strong>
+          </header>
+          <dl>
+            <div><dt>同步状态</dt><dd>${escapeHtml(sourceStateLabel(source.state))}</dd></div>
+            <div><dt>远端提交</dt><dd><code>${escapeHtml(source.commitShort || '未获取')}</code></dd></div>
+            <div><dt>提交时间</dt><dd>${escapeHtml(formatVersionDate(source.committedAt, '未获取'))}</dd></div>
+          </dl>
+        </section>
+      </div>
+
+      <section class="version-update-timeline">
+        <div><span>本次检查</span><strong>${escapeHtml(formatVersionDate(status.checkedAt))}</strong></div>
+        <div><span>下次计划</span><strong>${escapeHtml(formatVersionDate(status.nextCheckAt, '未计划'))}</strong></div>
+        <div><span>API 剩余</span><strong>${rateLimit.remaining === null || rateLimit.remaining === undefined ? '未返回' : `${Number(rateLimit.remaining)} / ${Number(rateLimit.limit || 0)}`}</strong></div>
+      </section>
+
+      ${error ? `
+        <section class="version-update-error" role="status">
+          <strong>${escapeHtml(error.message || '版本检查失败')}</strong>
+          <span>${error.retryAt ? `预计恢复：${escapeHtml(formatVersionDate(error.retryAt))}` : '系统会保留上次成功结果。'}</span>
+        </section>
+      ` : ''}
+
+      ${stable.notes ? `
+        <section class="version-update-notes">
+          <span>版本说明</span>
+          <pre>${escapeHtml(stable.notes)}</pre>
+        </section>
+      ` : ''}
+    </div>
+  `;
+  $('editor-form').innerHTML = body;
+};
+
 const formatLargeBytes = value => {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
@@ -1117,12 +1253,14 @@ const clientBuildFailed = () => {
   return state.clientBuildStatus?.lastFailure || null;
 };
 const clientBuildIsBuilding = () => Boolean(clientBuildActive()) || state.clientBuildGenerating;
-const clientBuildCounts = () => clientBuildLatest()?.publicStats || {
-  payloads: state.payloads.length,
-  tools: state.tools.length,
-  navigation: state.navigation.length,
-  toolNavigation: 0,
-};
+const clientBuildCounts = () => clientBuildLatest()?.publicStats
+  || state.clientBuildStatus?.publicStats
+  || {
+    payloads: state.payloads.length,
+    tools: state.tools.length,
+    navigation: state.navigation.filter(item => item.kind !== 'tools').length,
+    toolNavigation: state.navigation.filter(item => item.kind === 'tools').length,
+  };
 
 const clientBuildItems = () => {
   const latest = clientBuildLatest();
@@ -1186,7 +1324,11 @@ const renderClientTargetMatrix = (targets, selectedTargets, isBuilding) => {
             <span>${escapeHtml(target.platformLabel || clientPlatformLabel(target.platform))}</span>
             <strong>${escapeHtml(target.archLabel || target.arch)} / ${escapeHtml(target.format)}</strong>
             ${clientTargetMeta(target) ? `<em>${escapeHtml(clientTargetMeta(target))}</em>` : ''}
-            <small>${target.supported ? '当前环境可生成' : escapeHtml(target.reason || '当前环境不可生成')}</small>
+            <small>${target.supported
+              ? target.source === 'official-shell'
+                ? `官方壳 ${escapeHtml(target.shellVersion || '')}`.trim()
+                : '本机工具链'
+              : escapeHtml(target.reason || '不可生成')}</small>
           </label>
         `;
       }).join('')}
@@ -1216,7 +1358,7 @@ const renderClientArtifacts = items => {
               <strong>${escapeHtml(item.platformLabel || clientPlatformLabel(item.platform))}</strong>
               <small>${escapeHtml(item.fileName || '')}</small>
             </span>
-            <span>${escapeHtml(item.archLabel || item.arch || '')}<small>${escapeHtml(item.format || '')}</small></span>
+            <span>${escapeHtml(item.archLabel || item.arch || '')}<small>${escapeHtml(item.format || '')}${item.buildSource === 'official-shell' ? ` · 官方壳 ${escapeHtml(item.shellVersion || '')}` : ' · 本机构建'}</small></span>
             <span>${formatLargeBytes(item.size)}</span>
             <span>${escapeHtml(formatBuildDate(item.generatedAt || item.finishedAt || item.startedAt))}</span>
             <span>${escapeHtml(signingLabel(item.codeSigningConfigured))}</span>
@@ -1255,7 +1397,6 @@ const renderClientBuildFormV2 = () => {
         <div>
           <span>Payloader Desktop Client</span>
           <h3>生成多平台客户端</h3>
-          <p>生成结果是离线 Electron 桌面客户端，安装后打开独立窗口，不依赖浏览器。后台会按 Windows、Linux、macOS 和 CPU 架构生成对应安装包，当前主机只默认勾选可直接生成的目标；跨系统目标建议放到对应 CI 构建机执行。</p>
         </div>
         <div class="client-build-actions">
           <button class="btn primary" type="button" data-action="generate-client-build" ${isBuilding || !selectedCount ? 'disabled' : ''}>
@@ -1269,17 +1410,17 @@ const renderClientBuildFormV2 = () => {
         <div class="client-build-card">
           <span>当前状态</span>
           <strong>${escapeHtml(active?.message || latest?.message || (staleLatest ? '旧客户端需要重新生成' : '尚未生成'))}</strong>
-          <small>${active ? '构建任务正在后台执行，完成后会自动刷新制品列表。' : failed ? '上次生成失败，请查看日志后重新生成。' : staleLatest ? `旧产物 contract ${escapeHtml(staleLatest.buildContractVersion || '-')} 不再作为前台下载版本，请重新生成。` : items.length ? '客户端列表已可下载。' : '选择目标后生成第一个客户端。'}</small>
+          <small>${active ? '执行中' : failed ? '上次失败' : staleLatest ? `需升级 contract ${escapeHtml(staleLatest.buildContractVersion || '-')}` : items.length ? `${items.length} 个制品` : '无制品'}</small>
         </div>
         <div class="client-build-card">
           <span>公开数据快照</span>
           <strong>${Number(counts.payloads || 0)} Payload / ${Number(counts.tools || 0)} 工具</strong>
-          <small>${Number(counts.navigation || 0)} payload navigation groups, ${Number(counts.toolNavigation || 0)} tool navigation groups.</small>
+          <small>${Number(counts.navigation || 0)} 个 Payload 导航根 · ${Number(counts.toolNavigation || 0)} 个工具导航根</small>
         </div>
         <div class="client-build-card">
           <span>签名状态</span>
           <strong>${signingLabel(signingConfigured)}</strong>
-          <small>${signingConfigured ? '构建时会使用证书签名，有助于降低误报和系统拦截。' : '未签名安全工具客户端更容易被安全软件标记；生产分发建议配置正规代码签名证书。'}</small>
+          <small>${signingConfigured ? '当前制品已标记签名' : '当前制品未签名'}</small>
         </div>
       </section>
 
@@ -1289,7 +1430,7 @@ const renderClientBuildFormV2 = () => {
             <span>目标矩阵</span>
             <h3>选择要生成的客户端版本</h3>
           </div>
-          <small>当前宿主：${escapeHtml(environment.platform || '')} / ${escapeHtml(environment.arch || '')}${environment.crossPlatformOverride ? '，已开启跨平台强制尝试' : ''}。不可勾选目标需要对应系统或 CI。</small>
+          <small>${escapeHtml(environment.platform || '')} / ${escapeHtml(environment.arch || '')}${environment.shellVersion ? ` · 官方壳 ${escapeHtml(environment.shellVersion)}` : ''}</small>
         </div>
         ${renderClientTargetMatrix(targets, selectedTargets, isBuilding)}
       </section>
@@ -1303,18 +1444,6 @@ const renderClientBuildFormV2 = () => {
           <small>${items.length} 个文件 · ${escapeHtml(runtime)}${staleLatest ? ' · 旧产物已隐藏' : ''}</small>
         </div>
         ${renderClientArtifacts(items)}
-      </section>
-
-      <section class="client-build-policy">
-        <h3>性能、安全与误报边界</h3>
-        <ul>
-          <li>客户端内置本次生成时的公开数据快照，但启动时先打开窗口，首次请求数据时再读取和校验快照，减少首屏卡顿。</li>
-          <li>客户端不包含后台页面、后台 API、SQLite 文件、管理员凭据、导入模板、Logo 上传接口，也不注册自启动或更新器。</li>
-          <li>Windows 默认使用普通压缩和 asInvoker 权限，避免高压缩解包成本和不必要提权；Linux AppImage 使用更快的 gzip 压缩策略。</li>
-          <li>Linux 目标覆盖 AppImage、DEB、RPM 的 x64/ARM64，另提供 ARMv7/armhf 目标；macOS 目标覆盖 Intel、Apple Silicon 和 Universal DMG。</li>
-          <li>降低误报依赖代码签名、稳定文件名、SHA256 校验、官方下载页、最小权限和厂商误报申诉；本系统不做加壳、混淆、规避安全软件检测、注入或隐蔽行为。</li>
-          <li>macOS 可分发 DMG 需要在 macOS 构建机上完成签名和公证；Windows 本机只展示该目标，不伪装成已完成公证。</li>
-        </ul>
       </section>
 
       ${logs.length || failed ? `
@@ -1452,6 +1581,7 @@ const renderPayloadForm = () => {
 
 const renderToolForm = () => {
   const item = clone(state.draft || selectedItem() || defaultTool());
+  const locked = Boolean(item.systemLocked);
   const body = `
     ${section('工具信息', '决定工具在前台列表和详情页中的展示。', `
       <div class="form-grid">
@@ -1472,10 +1602,16 @@ const renderToolForm = () => {
         ${textarea('tool-references', '参考链接', joinPlainLines(item.references), { wide: true })}
       </div>
     `)}
-    <div class="form-actions">
-      <button class="btn primary" type="submit">保存工具</button>
-      <button class="btn" type="button" id="cancel-item">取消修改</button>
-    </div>
+    ${locked ? `
+      <div class="form-actions">
+        <span class="locked-record-note">默认外链 · 只读</span>
+      </div>
+    ` : `
+      <div class="form-actions">
+        <button class="btn primary" type="submit">保存工具</button>
+        <button class="btn" type="button" id="cancel-item">取消修改</button>
+      </div>
+    `}
   `;
   $('editor-form').innerHTML = body;
 };
@@ -1695,6 +1831,59 @@ const validateAccountInput = item => {
   return true;
 };
 
+const hasBilingualText = value => Boolean(
+  value
+  && typeof value === 'object'
+  && String(value.zh || '').trim()
+  && String(value.en || '').trim()
+);
+
+const hasCompleteCommand = (entry, labelKey) => Boolean(
+  String(entry?.command || '').trim()
+  && hasBilingualText(entry?.[labelKey])
+  && hasBilingualText(entry?.description)
+);
+
+const validationFailure = (message, fieldId) => {
+  notice(message);
+  const field = $(fieldId);
+  field?.focus?.();
+  field?.select?.();
+  return false;
+};
+
+const validateContentInput = item => {
+  if (state.module === 'payloads') {
+    if (!hasBilingualText(item.name)) return validationFailure('请补全中英文名称', 'payload-name-zh');
+    if (!hasBilingualText(item.description)) return validationFailure('请补全中英文描述', 'payload-desc-zh');
+    if (!hasBilingualText(item.category)) return validationFailure('请补全中英文分类', 'payload-category-zh');
+    if (!item.execution?.some(entry => hasCompleteCommand(entry, 'title'))) {
+      return validationFailure('请至少添加一条完整的执行命令（含中英文标题、描述和命令）', 'payload-name-zh');
+    }
+    const tutorialFields = ['overview', 'vulnerability', 'exploitation', 'mitigation'];
+    if (!tutorialFields.every(key => hasBilingualText(item.tutorial?.[key]))) {
+      return validationFailure('请补全教程的中英文内容（概述、原理、利用方法和防护措施）', 'tutorial-overview-zh');
+    }
+    if (!hasBilingualText(item.analysis)) return validationFailure('请补全中英文结果分析', 'payload-analysis-zh');
+    if (!item.prerequisites?.length) return validationFailure('请至少填写一项前置条件', 'payload-prerequisites');
+    if (!item.opsecTips?.length) return validationFailure('请至少填写一项 OpSec 提示', 'payload-opsec');
+    if (!item.references?.length) return validationFailure('请至少填写一个参考链接', 'payload-references');
+  }
+
+  if (state.module === 'tools') {
+    if (!hasBilingualText(item.name)) return validationFailure('请补全中英文名称', 'tool-name-zh');
+    if (!hasBilingualText(item.description)) return validationFailure('请补全中英文描述', 'tool-desc-zh');
+    if (!hasBilingualText(item.category)) return validationFailure('请补全中英文分类', 'tool-category-zh');
+    if (!hasBilingualText(item.installation)) return validationFailure('请补全中英文安装方式', 'tool-install-zh');
+    if (!item.commands?.some(entry => hasCompleteCommand(entry, 'name'))) {
+      return validationFailure('请至少添加一条完整的执行命令（含中英文名称、描述和命令）', 'tool-name-zh');
+    }
+    if (!item.references?.length) return validationFailure('请至少填写一个参考链接', 'tool-references');
+  }
+
+  return true;
+};
+
 const collectCurrentForm = () => {
   if (state.module === 'settings') return collectSettings();
   if (state.module === 'account') return collectAccount();
@@ -1713,6 +1902,7 @@ const renderEditor = () => {
     if (state.module === 'tools') renderToolForm();
     if (state.module === 'navigation') renderNavigationForm();
     if (state.module === 'clientBuilds') renderClientBuildFormV2();
+    if (state.module === 'updates') renderVersionUpdateCenter();
     if (state.module === 'account') renderAccountForm();
     syncEditorChrome();
   } finally {
@@ -1814,7 +2004,13 @@ const renderGroups = () => {
 const renderList = () => {
   const list = $('item-list');
   const items = filteredItems();
-  $('item-count').textContent = String(items.length);
+  const visibleItemLimit = state.visibleItemLimit;
+  const firstPage = items.slice(0, visibleItemLimit);
+  const selectedOutsidePage = items.find((item, index) => index >= visibleItemLimit && item.id === state.selectedId);
+  const visibleItems = selectedOutsidePage ? [...firstPage, selectedOutsidePage] : firstPage;
+  $('item-count').textContent = visibleItems.length < items.length
+    ? `${visibleItems.length} / ${items.length}`
+    : String(items.length);
   const filterSummary = $('filter-summary');
   if (filterSummary) {
     filterSummary.textContent = state.group
@@ -1829,7 +2025,7 @@ const renderList = () => {
     list.innerHTML = '<div class="empty">没有匹配的数据</div>';
     return;
   }
-  list.innerHTML = items.map(item => `
+  const rows = visibleItems.map(item => `
     <button class="item-row ${item.id === state.selectedId ? 'active' : ''}" type="button" data-id="${escapeHtml(item.id)}">
       <span class="item-main">
         <strong>${escapeHtml(getText(item.name) || item.id)}</strong>
@@ -1840,6 +2036,12 @@ const renderList = () => {
       </span>
     </button>
   `).join('');
+  const remaining = items.length - visibleItems.length;
+  list.innerHTML = `${rows}${remaining > 0 ? `
+    <button class="list-load-more" type="button" data-action="load-more-items">
+      加载更多 <small>剩余 ${remaining} 条</small>
+    </button>
+  ` : ''}`;
 };
 
 const updateTopbar = () => {
@@ -1850,24 +2052,18 @@ const updateTopbar = () => {
   document.body.dataset.dirty = state.dirty ? 'true' : 'false';
   syncNavCollapse();
   $('module-title').textContent = moduleConfig().title;
-  $('module-desc').textContent = moduleConfig().desc;
-  $('module-desc').hidden = !moduleConfig().desc;
   $('list-module-label').textContent = moduleLabels[state.module] || moduleConfig().title;
   $('list-title').textContent = state.module === 'settings' ? '站点设置' : `${moduleConfig().title}列表`;
-  $('stat-payloads').textContent = String(state.payloads.length);
-  $('stat-tools').textContent = String(state.tools.length);
-  $('stat-nav').textContent = String(state.navigation.length);
-  $('stat-active').textContent = isSingletonModule() ? '1' : String(activeItems().length);
-
   const dataActions = !isSingletonModule();
   const singletonActions = state.module === 'settings' || state.module === 'account';
   const accountModule = state.module === 'account';
-  const busy = state.loading || state.saving || state.importing || state.clientBuildGenerating;
-  $('save-current').disabled = busy || (!singletonActions && !selectedItem() && !state.draft);
+  const busy = state.loading || state.saving || state.importing || state.clientBuildGenerating || state.versionChecking;
+  const lockedSelection = Boolean(selectedItem()?.systemLocked);
+  $('save-current').disabled = busy || lockedSelection || (!singletonActions && !selectedItem() && !state.draft);
   $('cancel-current').disabled = busy || !state.dirty;
   $('new-item').disabled = busy || !dataActions;
-  $('move-up').disabled = busy || !dataActions || !selectedItem();
-  $('move-down').disabled = busy || !dataActions || !selectedItem();
+  $('move-up').disabled = busy || lockedSelection || !dataActions || !selectedItem();
+  $('move-down').disabled = busy || lockedSelection || !dataActions || !selectedItem();
   $('delete-item').disabled = busy || !dataActions || !selectedItem();
   $('open-import').disabled = busy;
   $('mobile-move-up').disabled = $('move-up').disabled;
@@ -1876,10 +2072,13 @@ const updateTopbar = () => {
   $('reset-module').disabled = busy || accountModule;
   $('reset-all').disabled = busy || accountModule;
   const clientBuildModule = state.module === 'clientBuilds';
+  const updatesModule = state.module === 'updates';
   for (const buttonId of ['save-current', 'cancel-current', 'new-item', 'move-up', 'move-down', 'delete-item', 'open-import', 'reset-module', 'reset-all']) {
-    $(buttonId)?.classList.toggle('hidden', clientBuildModule || (accountModule && !['save-current', 'cancel-current'].includes(buttonId)));
+    $(buttonId)?.classList.toggle('hidden', clientBuildModule || updatesModule || (accountModule && !['save-current', 'cancel-current'].includes(buttonId)));
   }
   $('list-panel').classList.toggle('hidden', isSingletonModule());
+  $('editor-head').classList.toggle('hidden', isSingletonModule());
+  $('editor-mobile-head').classList.toggle('hidden', isSingletonModule());
   document.querySelector('.workspace').classList.toggle('settings-mode', isSingletonModule());
   $('mobile-view-switch')?.classList.toggle('hidden', isSingletonModule());
   for (const button of document.querySelectorAll('.view-btn')) {
@@ -1895,6 +2094,11 @@ const render = () => {
     button.classList.toggle('active', isActive);
     if (isActive) activeModuleButton = button;
   }
+  const moduleSelect = $('admin-module-select');
+  if (moduleSelect && state.module !== 'custom') moduleSelect.value = state.module;
+  const updateBadge = $('update-nav-badge');
+  const updateAvailable = ['update-available', 'source-update-available'].includes(state.versionStatus?.state);
+  if (updateBadge) updateBadge.classList.toggle('hidden', !updateAvailable);
   updateTopbar();
   renderGroups();
   renderList();
@@ -1946,17 +2150,46 @@ const generateClientBuild = async () => {
   }
 };
 
+const loadVersionStatus = async (options = {}) => {
+  if (!options.quiet) state.versionChecking = true;
+  updateTopbar();
+  try {
+    state.versionStatus = await api('/api/admin/version-status');
+    if (state.module === 'updates') render();
+    return state.versionStatus;
+  } finally {
+    if (!options.quiet) state.versionChecking = false;
+    updateTopbar();
+  }
+};
+
+const checkVersionNow = async () => {
+  if (state.versionChecking) return;
+  state.versionChecking = true;
+  updateTopbar();
+  if (state.module === 'updates') renderVersionUpdateCenter();
+  try {
+    state.versionStatus = await api('/api/admin/version-check', { method: 'POST' });
+    notice(state.versionStatus.error ? '版本检查完成，但 GitHub 暂时不可用' : '版本状态已更新');
+  } finally {
+    state.versionChecking = false;
+    if (state.module === 'updates') render();
+    else updateTopbar();
+  }
+};
+
 const loadAll = async () => {
   await loadSession();
   state.loading = true;
   updateTopbar();
   try {
-    const [settings, payloads, tools, navigation, clientBuildStatus, account] = await Promise.all([
+    const [settings, payloads, tools, navigation, clientBuildStatus, versionStatus, account] = await Promise.all([
       api('/api/admin/settings'),
       api('/api/admin/payloads'),
       api('/api/admin/tools'),
       api('/api/admin/navigation'),
       api('/api/admin/client-builds/status'),
+      api('/api/admin/version-status'),
       api('/api/admin/credentials'),
     ]);
     state.settings = settings || defaultSettings();
@@ -1964,6 +2197,7 @@ const loadAll = async () => {
     state.tools = Array.isArray(tools.items) ? tools.items : [];
     state.navigation = Array.isArray(navigation.items) ? navigation.items : [];
     state.clientBuildStatus = clientBuildStatus;
+    state.versionStatus = versionStatus;
     state.account = account;
     if (!isSingletonModule() && !selectedItem()) {
       state.selectedId = activeItems()[0]?.id || null;
@@ -1985,13 +2219,14 @@ const saveCurrent = async () => {
   if (state.module === 'clientBuilds') return;
   const item = collectCurrentForm();
   if (state.module === 'account' && !validateAccountInput(item)) return;
+  if (!validateContentInput(item)) return;
   state.saving = true;
   updateTopbar();
   try {
     if (state.module === 'account') {
       await api('/api/admin/credentials', { method: 'PUT', body: JSON.stringify(item) });
-      sessionStorage.removeItem('payloader-admin-csrf');
-      state.csrfToken = '';
+      sessionStorage.removeItem(adminTokenStorageKey);
+      state.accessToken = '';
       notice('账号安全设置已保存，请重新登录');
       window.setTimeout(() => window.location.replace('/admin/login'), 600);
       return;
@@ -2073,7 +2308,7 @@ const deleteSelected = async () => {
 };
 
 const resetCurrent = async target => {
-  if (state.module === 'clientBuilds' || state.module === 'account' || state.saving) return;
+  if (state.module === 'clientBuilds' || state.module === 'updates' || state.module === 'account' || state.saving) return;
   state.saving = true;
   updateTopbar();
   try {
@@ -2098,6 +2333,14 @@ const resetCurrent = async target => {
       const signedDelta = delta > 0 ? `+${delta}` : String(delta);
       return `- ${resetScopeLabels[scope] || scope}：重置前 ${before} / 默认 ${seed} / 净变化 ${signedDelta}`;
     });
+    const xeyeImpact = impact.integrations?.xeye;
+    if (xeyeImpact?.affected) {
+      const beforeLabel = xeyeImpact.before ? '当前已启用' : '当前已删除';
+      const afterLabel = xeyeImpact.seed
+        ? (xeyeImpact.before ? '重置后保持启用' : '重置后恢复')
+        : '重置后关闭';
+      impactLines.push(`- Xeye 平台入口：${beforeLabel} / ${afterLabel}`);
+    }
     const isAll = target === 'all';
     const resetScope = isAll
       ? '这会把站点设置、Payload、工具命令和导航树全部重置为内置默认数据。'
@@ -2273,6 +2516,11 @@ document.addEventListener('click', event => {
     return;
   }
 
+  if (button.dataset.action === 'check-version') {
+    checkVersionNow().catch(error => notice(error.message || '版本检查失败'));
+    return;
+  }
+
   if (button.matches('.module-btn')) {
     const nextModule = button.dataset.module;
     if (!nextModule || nextModule === state.module) return;
@@ -2281,6 +2529,7 @@ document.addEventListener('click', event => {
     state.selectedId = singletonModules.has(nextModule) ? null : activeItems()[0]?.id || null;
     state.query = '';
     state.group = '';
+    state.visibleItemLimit = itemListPageSize;
     state.draft = null;
     state.activeSectionTitle = null;
     state.logoUploadMeta = null;
@@ -2290,6 +2539,9 @@ document.addEventListener('click', event => {
     render();
     if (state.module === 'clientBuilds') {
       loadClientBuildStatus({ quiet: true }).catch(error => notice(error.message || '刷新客户端生成状态失败'));
+    }
+    if (state.module === 'updates') {
+      loadVersionStatus({ quiet: true }).catch(error => notice(error.message || '读取版本状态失败'));
     }
     return;
   }
@@ -2326,6 +2578,7 @@ document.addEventListener('click', event => {
 
   if (button.matches('.group-btn')) {
     state.group = button.dataset.group || '';
+    state.visibleItemLimit = itemListPageSize;
     render();
     return;
   }
@@ -2348,6 +2601,12 @@ document.addEventListener('click', event => {
 
   const action = button.dataset.action;
   if (!action) return;
+
+  if (action === 'load-more-items') {
+    state.visibleItemLimit += itemListPageSize;
+    renderList();
+    return;
+  }
 
   if (action === 'close-section') {
     closeActiveSection();
@@ -2496,12 +2755,12 @@ document.addEventListener('click', event => {
 
 $('editor-form').addEventListener('submit', event => {
   event.preventDefault();
-  if (state.module === 'clientBuilds') return;
+  if (state.module === 'clientBuilds' || state.module === 'updates') return;
   saveCurrent().catch(error => notice(error.message || '保存失败'));
 });
 
 $('editor-form').addEventListener('input', () => {
-  if (state.module === 'clientBuilds') return;
+  if (state.module === 'clientBuilds' || state.module === 'updates') return;
   if (state.rendering || state.loading || state.saving) return;
   if (state.module === 'account') {
     setDirty(true);
@@ -2525,6 +2784,7 @@ $('editor-form').addEventListener('change', event => {
     renderClientBuildFormV2();
     return;
   }
+  if (state.module === 'updates') return;
   if (state.rendering || state.loading || state.saving) return;
   if (state.module === 'account') {
     setDirty(true);
@@ -2578,6 +2838,7 @@ for (const input of document.querySelectorAll('input[name="import-mode"]')) {
 $('clear-filter').onclick = () => {
   state.query = '';
   state.group = '';
+  state.visibleItemLimit = itemListPageSize;
   $('search').value = '';
   const groupSelect = $('group-select');
   if (groupSelect) groupSelect.value = '';
@@ -2585,11 +2846,29 @@ $('clear-filter').onclick = () => {
 };
 $('search').oninput = event => {
   state.query = event.target.value;
+  state.visibleItemLimit = itemListPageSize;
   renderList();
 };
 $('group-select').onchange = event => {
   state.group = event.target.value;
+  state.visibleItemLimit = itemListPageSize;
   render();
+};
+
+const setMoreActionsOpen = open => {
+  const trigger = $('more-actions');
+  const menu = $('more-actions-menu');
+  if (!trigger || !menu) return;
+  trigger.setAttribute('aria-expanded', String(open));
+  menu.classList.toggle('hidden', !open);
+};
+
+$('more-actions').onclick = () => {
+  setMoreActionsOpen($('more-actions').getAttribute('aria-expanded') !== 'true');
+};
+
+$('admin-module-select').onchange = event => {
+  document.querySelector(`.module-btn[data-module="${event.target.value}"]`)?.click();
 };
 
 document.addEventListener('click', event => {
@@ -2599,9 +2878,17 @@ document.addEventListener('click', event => {
   if (event.target?.id === 'import-modal') {
     closeImportModal();
   }
+  if (!event.target.closest('.more-actions') || event.target.closest('.action-menu-item')) {
+    setMoreActionsOpen(false);
+  }
 });
 
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('more-actions').getAttribute('aria-expanded') === 'true') {
+    setMoreActionsOpen(false);
+    $('more-actions').focus();
+    return;
+  }
   if (event.key === 'Escape' && state.importOpen) {
     closeImportModal();
     return;
@@ -2619,4 +2906,10 @@ window.addEventListener('beforeunload', event => {
   event.returnValue = '';
 });
 
-loadAll().catch(error => notice(error.message || '加载失败'));
+loadAll()
+  .then(() => {
+    const initialModule = sessionStorage.getItem('payloader-admin-initial-module');
+    sessionStorage.removeItem('payloader-admin-initial-module');
+    if (initialModule === 'custom') document.querySelector('.module-btn[data-module="custom"]')?.click();
+  })
+  .catch(error => notice(error.message || '加载失败'));

@@ -6,10 +6,35 @@ import test from 'node:test';
 
 const importBuilder = async (buildRoot, label) => {
   process.env.PAYLOADER_CLIENT_BUILD_ROOT = buildRoot;
+  process.env.PAYLOADER_CLIENT_SHELLS_REMOTE_DISABLED = 'true';
   const moduleUrl = new URL('../server/client-builder.mjs', import.meta.url);
   moduleUrl.searchParams.set('client-build-metadata-test', `${label}-${Date.now()}-${Math.random()}`);
   return import(moduleUrl.href);
 };
+
+test('official shells make foreign targets available without cross-platform native packaging', { concurrency: false }, async t => {
+  const temp = await makeTempBuildRoot('shell-target');
+  t.after(() => rm(temp.root, { recursive: true, force: true }));
+  const builder = await importBuilder(temp.buildRoot, 'shell-target');
+  builder.__clientBuildTest.setShellCatalogProvider(async () => ({
+    source: 'github-release',
+    manifest: { appVersion: '2.0.0' },
+    targets: {
+      'mac-arm64-dmg': {
+        platform: 'macos',
+        arch: 'arm64',
+        outputFormat: 'tar.gz',
+        signed: false,
+      },
+    },
+  }));
+  const status = await builder.getClientBuildStatus();
+  const target = status.targets.find(item => item.id === 'mac-arm64-dmg');
+  assert.equal(target.supported, true);
+  assert.equal(target.source, 'official-shell');
+  assert.equal(target.format, 'Portable TAR.GZ');
+  assert.equal(status.environment.shellVersion, '2.0.0');
+});
 
 const makeTempBuildRoot = async label => {
   const root = await mkdtemp(join(tmpdir(), `payloader-client-build-${label}-`));
@@ -153,6 +178,23 @@ test('freshness classifies frontend and public-data hash mismatches independentl
   assert.equal(publicDataMismatch.sourceCurrent, true);
   assert.equal(publicDataMismatch.publicDataCurrent, false);
   assert.deepEqual(publicDataMismatch.reasons, ['public-data-changed']);
+});
+
+test('status without a successful build skips expensive freshness hashing', { concurrency: false }, async t => {
+  const temp = await makeTempBuildRoot('no-build-short-circuit');
+  const builder = await importBuilder(temp.buildRoot, 'no-build-short-circuit');
+  t.after(() => rm(temp.root, { recursive: true, force: true }));
+  let computations = 0;
+  builder.__clientBuildTest.setFreshnessHashProvider(async () => {
+    computations += 1;
+    return { sourceHash: 'unused', publicDataHash: 'unused' };
+  });
+
+  const publicInfo = await builder.getPublicClientBuildInfo();
+
+  assert.equal(publicInfo.available, false);
+  assert.deepEqual(publicInfo.freshness.reasons, ['no-successful-build']);
+  assert.equal(computations, 0);
 });
 
 test('current-contract artifacts remain downloadable when freshness is stale', { concurrency: false }, async t => {
@@ -313,4 +355,105 @@ test('admin failed-build rendering reads the independent lastFailure field', asy
   const helperSource = adminSource.match(/const clientBuildFailed = \(\) => \{[\s\S]*?\n\};/)?.[0] || '';
   assert.match(helperSource, /state\.clientBuildStatus\?\.lastFailure/);
   assert.doesNotMatch(helperSource, /latest\?\.status === 'failed'/);
+});
+
+test('packaged client keeps large snapshots and assets off the main-process heap', async () => {
+  const electronSource = await readFile(new URL('../server/client-electron-main.cjs', import.meta.url), 'utf8');
+  const builderSource = await readFile(new URL('../server/client-builder.mjs', import.meta.url), 'utf8');
+
+  assert.match(electronSource, /createReadStream/);
+  assert.match(electronSource, /Readable\.toWeb/);
+  assert.match(electronSource, /require\(['"]\.\/client-deployment-runtime\.cjs['"]\)/);
+  assert.match(electronSource, /resolveDeploymentPackageCandidates/);
+  assert.match(electronSource, /loadExternalDeploymentPackage/);
+  assert.match(electronSource, /deploymentPackage\?\.manifest/);
+  assert.match(electronSource, /custom-tools\.json/);
+  assert.doesNotMatch(electronSource, /const assetCache = new Map\(\)/);
+  assert.doesNotMatch(electronSource, /void loadPublicDataSnapshot\(\)/);
+  assert.doesNotMatch(electronSource, /Pre-read hashed JS\/CSS bundles/);
+  assert.match(builderSource, /custom-tools\.json/);
+  assert.match(builderSource, /projectAttributionSource/);
+  assert.match(builderSource, /copyFile\(projectAttributionSource/);
+  assert.match(builderSource, /copyFile\(clientDeploymentRuntimeSource/);
+  assert.match(builderSource, /project-attribution\.cjs/);
+  assert.match(builderSource, /client-deployment-runtime\.cjs/);
+  assert.match(electronSource, /require\(['"]\.\/project-attribution\.cjs['"]\)/);
+  assert.match(electronSource, /value === clientProjectRoute/);
+});
+
+test('packaged client enables background throttling and prevents duplicate instances', async () => {
+  const electronSource = await readFile(new URL('../server/client-electron-main.cjs', import.meta.url), 'utf8');
+
+  assert.match(electronSource, /requestSingleInstanceLock\(\)/);
+  assert.match(electronSource, /app\.on\(['"]second-instance['"]/);
+  assert.match(electronSource, /backgroundThrottling:\s*true/);
+  assert.match(electronSource, /v8CacheOptions:\s*['"]code['"]/);
+  assert.doesNotMatch(electronSource, /navigate-to/);
+});
+
+test('client build subprocess environment excludes server and host secrets', async t => {
+  const temp = await makeTempBuildRoot('environment-isolation');
+  t.after(() => rm(temp.root, { recursive: true, force: true }));
+  const builder = await importBuilder(temp.buildRoot, 'environment-isolation');
+  const environment = builder.__clientBuildTest.createBuildEnvironment({
+    Path: 'C:\\Windows\\System32',
+    SystemRoot: 'C:\\Windows',
+    TEMP: 'C:\\Temp',
+    LANG: 'zh_CN.UTF-8',
+    HTTPS_PROXY: 'http://proxy.example:8080',
+    PAYLOADER_ADMIN_PASSWORD: 'must-not-leak',
+    PAYLOADER_JWT_SECRET: 'must-not-leak',
+    PAYLOADER_DATA_DIR: 'C:\\sensitive-data',
+    GH_TOKEN: 'must-not-leak',
+    GITHUB_TOKEN: 'must-not-leak',
+    PAYLOADER_GITHUB_TOKEN: 'must-not-leak',
+    AWS_SECRET_ACCESS_KEY: 'must-not-leak',
+    AZURE_CLIENT_SECRET: 'must-not-leak',
+    GOOGLE_APPLICATION_CREDENTIALS: 'C:\\cloud-secret.json',
+    PAYLOADER_WINDOWS_CSC_LINK: 'C:\\signing-cert.p12',
+    PAYLOADER_WINDOWS_CSC_KEY_PASSWORD: 'signing-password',
+  }, { includeSigning: true });
+
+  assert.equal(environment.Path, 'C:\\Windows\\System32');
+  assert.equal(environment.SystemRoot, 'C:\\Windows');
+  assert.equal(environment.LANG, 'zh_CN.UTF-8');
+  assert.equal(environment.HTTPS_PROXY, 'http://proxy.example:8080');
+  assert.equal(environment.CSC_LINK, 'C:\\signing-cert.p12');
+  assert.equal(environment.CSC_KEY_PASSWORD, 'signing-password');
+  for (const secret of [
+    'PAYLOADER_ADMIN_PASSWORD',
+    'PAYLOADER_JWT_SECRET',
+    'PAYLOADER_DATA_DIR',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'PAYLOADER_GITHUB_TOKEN',
+    'AWS_SECRET_ACCESS_KEY',
+    'AZURE_CLIENT_SECRET',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'PAYLOADER_WINDOWS_CSC_LINK',
+    'PAYLOADER_WINDOWS_CSC_KEY_PASSWORD',
+  ]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(environment, secret), false, `${secret} leaked into the build environment`);
+  }
+});
+
+test('client performance policy declares measurable runtime budgets', async t => {
+  const temp = await makeTempBuildRoot('performance-policy');
+  t.after(() => rm(temp.root, { recursive: true, force: true }));
+  const builder = await importBuilder(temp.buildRoot, 'performance-policy');
+  const policy = builder.__clientBuildTest.performancePolicy;
+
+  assert.equal(policy.streamsPublicDataSnapshot, true);
+  assert.equal(policy.boundsMainProcessAssetCache, true);
+  assert.equal(policy.backgroundThrottling, true);
+  assert.equal(policy.singleInstance, true);
+  assert.ok(policy.windows?.windowReadyMs <= 1500);
+  assert.ok(policy.windows?.searchSettledMs <= 300);
+  assert.ok(policy.windows?.idleWorkingSetMb <= 500);
+  assert.ok(policy.windows?.interactionWorkingSetMb <= 550);
+  assert.ok(policy.windows?.privateMemoryMb <= 440);
+  assert.ok(policy.windows?.privateMemoryGrowthMb <= 80);
+  assert.ok(policy.windows?.idleCpuPercentOneCore <= 2);
+  assert.ok(policy.linux?.windowReadyMs <= 2500);
+  assert.ok(policy.macos?.windowReadyMs <= 2500);
 });

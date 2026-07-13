@@ -26,8 +26,11 @@ test-results/
 .playwright-cli/
 screenshots/
 reports/
+artifacts/
+/output/
 audit-*.json
 data-audit-*.json
+/audit-workspace/**/*.sqlite*
 tmp-*
 *.key
 *.pem

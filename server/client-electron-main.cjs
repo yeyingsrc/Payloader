@@ -3,24 +3,35 @@
 const { app, BrowserWindow, protocol, shell, session } = require('electron');
 const { createHash, timingSafeEqual } = require('node:crypto');
 const { readFile } = require('node:fs/promises');
-const { existsSync } = require('node:fs');
+const { createReadStream, existsSync } = require('node:fs');
+const { Readable } = require('node:stream');
 const { extname, isAbsolute, join, relative, resolve, sep } = require('node:path');
+const {
+  clientProjectRoute,
+  officialProjectUrl,
+} = require('./project-attribution.cjs');
+const {
+  loadExternalDeploymentPackage,
+  resolveDeploymentPackageCandidates,
+} = require('./client-deployment-runtime.cjs');
 
 const appRoot = __dirname;
 const distRoot = join(appRoot, 'dist');
-const appDataRoot = join(appRoot, 'app');
-const manifestPath = join(appDataRoot, 'manifest.json');
-const publicDataPath = join(appDataRoot, 'public-data.json');
+const legacyAppDataRoot = join(appRoot, 'app');
+const legacyManifestPath = join(legacyAppDataRoot, 'manifest.json');
+let publicDataPath = join(legacyAppDataRoot, 'public-data.json');
+let customToolsPath = join(legacyAppDataRoot, 'custom-tools.json');
 const scheme = 'payloader';
 const host = 'app';
 const pathSeparator = sep;
 const internalOrigin = `${scheme}://${host}`;
 const internalUrlPrefix = `${internalOrigin}/`;
-const officialProjectUrl = 'https://github.com/3516634930/Payloader';
 const protectedXeyeUrl = 'https://xss.icu/';
-const protectedXssToolId = 'xss-platform';
-const allowedExternalUrls = Object.freeze([officialProjectUrl, protectedXeyeUrl]);
 const guardedWebContents = new WeakSet();
+const performanceSmokeEnabled = process.env.PAYLOADER_CLIENT_PERF_SMOKE === '1';
+const processStartedAt = Date.now();
+let windowReadyMs = null;
+let deploymentPackage = null;
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -69,7 +80,6 @@ const contentSecurityPolicy = [
   "media-src 'none'",
   "manifest-src 'self'",
   "form-action 'self'",
-  `navigate-to 'self' ${allowedExternalUrls.join(' ')}`,
 ].join('; ');
 
 const baseHeaders = {
@@ -83,12 +93,19 @@ const baseHeaders = {
 };
 
 const readText = filePath => readFile(filePath, 'utf8');
-const hashText = value => createHash('sha256').update(String(value), 'utf8').digest('hex');
 const safeHashEquals = (actual, expected) => {
   const left = Buffer.from(String(actual || ''), 'hex');
   const right = Buffer.from(String(expected || ''), 'hex');
   return left.length === right.length && timingSafeEqual(left, right);
 };
+
+const hashFile = filePath => new Promise((resolveHash, rejectHash) => {
+  const hash = createHash('sha256');
+  const stream = createReadStream(filePath);
+  stream.on('data', chunk => hash.update(chunk));
+  stream.on('error', rejectHash);
+  stream.on('end', () => resolveHash(hash.digest('hex')));
+});
 
 const response = (body, options = {}) => new Response(body, {
   status: options.status || 200,
@@ -127,13 +144,11 @@ const isInternalAppUrl = value => {
 };
 
 const normalizeAllowedExternalUrl = value => {
+  if (value === clientProjectRoute) return officialProjectUrl;
   try {
     const url = new URL(String(value || ''));
     if (url.protocol !== 'https:' || url.username || url.password || url.search) return '';
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
-    if (url.hostname === 'github.com' && pathname === '/3516634930/Payloader' && !url.hash) {
-      return officialProjectUrl;
-    }
     if (url.hostname === 'xss.icu' && pathname === '/' && !url.hash) {
       return protectedXeyeUrl;
     }
@@ -148,49 +163,6 @@ const openAllowedExternalUrl = value => {
   if (!safeUrl) return false;
   shell.openExternal(safeUrl).catch(() => {});
   return true;
-};
-
-const assertAllowedReferenceList = (items, label) => {
-  if (!Array.isArray(items)) return;
-  for (const item of items) {
-    if (!normalizeAllowedExternalUrl(item)) {
-      throw new Error(`Payloader offline snapshot contains blocked ${label}.`);
-    }
-  }
-};
-
-const assertSafeLogoUrl = value => {
-  const logoUrl = String(value || '').trim();
-  if (!logoUrl) return;
-  if (!/^\/uploads\/logo\/logo-[a-zA-Z0-9.-]+\.(png|jpe?g|webp)$/.test(logoUrl)) {
-    throw new Error('Payloader offline snapshot contains a blocked logo URL.');
-  }
-};
-
-const assertOfflineSnapshot = data => {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Payloader offline snapshot is invalid.');
-  }
-
-  const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
-  if (settings.projectUrl !== officialProjectUrl) {
-    throw new Error('Payloader offline snapshot project URL integrity check failed.');
-  }
-  assertSafeLogoUrl(settings.logoUrl);
-
-  for (const payload of Array.isArray(data.payloads) ? data.payloads : []) {
-    assertAllowedReferenceList(payload?.references, 'payload reference');
-  }
-
-  for (const tool of Array.isArray(data.tools) ? data.tools : []) {
-    const externalUrl = String(tool?.externalUrl || '');
-    if (externalUrl) {
-      if (String(tool?.id || '') !== protectedXssToolId || normalizeAllowedExternalUrl(externalUrl) !== protectedXeyeUrl) {
-        throw new Error('Payloader offline snapshot contains a blocked tool external URL.');
-      }
-    }
-    assertAllowedReferenceList(tool?.references, 'tool reference');
-  }
 };
 
 const guardNavigation = (event, nextUrl) => {
@@ -231,16 +203,9 @@ const configureOfflineSession = () => {
 };
 
 let manifest = null;
-let publicDataText = null;
-let publicDataTextPromise = null;
-let publicData = null;
-let publicDataPromise = null;
 let startupErrorText = '';
-
-// In-memory asset cache — Electron custom-protocol bypasses HTTP disk cache for
-// most navigation requests, so we keep buffers in process memory for the lifetime
-// of the app. Assets are immutable (Vite content-hashed) so stale-data is not a risk.
-const assetCache = new Map();
+const verifiedFiles = new Set();
+const verificationPromises = new Map();
 
 const escapeHtml = value => String(value || '')
   .replace(/&/g, '&amp;')
@@ -299,41 +264,36 @@ const startupErrorPage = () => `<!doctype html>
 </html>`;
 
 const loadManifest = async () => {
-  manifest = JSON.parse(await readText(manifestPath));
-};
-
-const loadPublicDataText = async () => {
-  if (publicDataText) return publicDataText;
-  if (publicDataTextPromise) return publicDataTextPromise;
-  publicDataTextPromise = (async () => {
-    const text = await readText(publicDataPath);
-    const expectedHash = String(manifest?.publicDataSha256 || '');
-    if (expectedHash && !safeHashEquals(hashText(text), expectedHash)) {
-      throw new Error('Payloader offline snapshot hash integrity check failed.');
-    }
-    publicDataText = text;
-    return text;
-  })().finally(() => {
-    publicDataTextPromise = null;
+  manifest = JSON.parse(await readText(legacyManifestPath));
+  const candidates = resolveDeploymentPackageCandidates({
+    configuredPath: process.env.PAYLOADER_CLIENT_DEPLOYMENT_DIR,
+    platform: process.platform,
+    execPath: process.execPath,
+    appImagePath: process.env.APPIMAGE,
   });
-  return publicDataTextPromise;
-};
-
-const loadPublicDataSnapshot = async () => {
-  if (publicDataText && publicData) {
-    return { text: publicDataText, data: publicData };
+  deploymentPackage = await loadExternalDeploymentPackage(candidates, {
+    buildContractVersion: manifest.buildContractVersion,
+  });
+  if (deploymentPackage) {
+    publicDataPath = deploymentPackage.publicDataPath;
+    customToolsPath = deploymentPackage.customToolsPath;
   }
-  if (publicDataPromise) return publicDataPromise;
-  publicDataPromise = (async () => {
-    const text = await loadPublicDataText();
-    const data = JSON.parse(text);
-    assertOfflineSnapshot(data);
-    publicData = data;
-    return { text, data };
+};
+
+const verifyBundledFile = async (filePath, expectedHash, label) => {
+  if (verifiedFiles.has(filePath)) return;
+  if (verificationPromises.has(filePath)) return verificationPromises.get(filePath);
+  const verification = (async () => {
+    const actualHash = await hashFile(filePath);
+    if (!expectedHash || !safeHashEquals(actualHash, expectedHash)) {
+      throw new Error(`Payloader ${label} hash integrity check failed.`);
+    }
+    verifiedFiles.add(filePath);
   })().finally(() => {
-    publicDataPromise = null;
+    verificationPromises.delete(filePath);
   });
-  return publicDataPromise;
+  verificationPromises.set(filePath, verification);
+  return verification;
 };
 
 const isAdminPath = pathname => (
@@ -344,24 +304,32 @@ const isAdminPath = pathname => (
 );
 
 const safeAssetPath = route => {
-  const asset = manifest.routes[route] || (route === '/' ? manifest.routes['/index.html'] : null);
+  const deploymentAsset = deploymentPackage?.assets?.[route];
+  if (deploymentAsset) return deploymentAsset;
+  const asset = manifest?.routes?.[route]
+    || (route === '/' ? manifest?.routes?.['/index.html'] : null);
   if (!asset || typeof asset.file !== 'string') return null;
   const target = resolve(appRoot, asset.file);
-  const allowed = isInside(distRoot, target) || isInside(appDataRoot, target);
+  const allowed = isInside(distRoot, target) || isInside(legacyAppDataRoot, target);
   return allowed ? { ...asset, target } : null;
 };
 
-const serveAsset = async asset => {
-  let data = assetCache.get(asset.target);
-  if (!data) {
-    data = await readFile(asset.target);
-    assetCache.set(asset.target, data);
+const streamFileResponse = (filePath, options = {}) => response(
+  options.head ? undefined : Readable.toWeb(createReadStream(filePath)),
+  options,
+);
+
+const serveAsset = async (asset, head = false) => {
+  if (asset.sha256) {
+    await verifyBundledFile(asset.target, String(asset.sha256), 'deployment asset');
   }
   // Vite content-hashed assets (filename contains 8+ hex chars) are immutable.
   const isImmutable = /[.-][0-9a-f]{8,}\.(js|css|woff2?)$/i.test(asset.target);
-  return response(data, {
+  return streamFileResponse(asset.target, {
+    head,
     contentType: asset.mimeType || mimeTypes[extname(asset.target).toLowerCase()] || 'application/octet-stream',
     cacheControl: isImmutable ? 'public, max-age=31536000, immutable' : (asset.cacheControl || 'public, max-age=3600'),
+    headers: asset.size ? { 'content-length': String(asset.size) } : {},
   });
 };
 
@@ -396,9 +364,17 @@ const handleProtocol = async request => {
       });
     }
     try {
-      const text = await loadPublicDataText();
-      return response(request.method === 'HEAD' ? undefined : text, {
-        contentType: 'application/json; charset=utf-8',
+      const descriptor = deploymentPackage?.manifest?.files?.['public-data.json'];
+      await verifyBundledFile(
+        publicDataPath,
+        String(descriptor?.sha256 || manifest?.publicDataSha256 || ''),
+        'offline snapshot',
+      );
+      return streamFileResponse(publicDataPath, {
+        head: request.method === 'HEAD',
+        contentType: descriptor?.mimeType || 'application/json; charset=utf-8',
+        cacheControl: 'public, max-age=31536000, immutable',
+        headers: descriptor?.size ? { 'content-length': String(descriptor.size) } : {},
       });
     } catch (error) {
       startupErrorText = error && error.stack ? error.stack : String(error || 'Unknown snapshot error');
@@ -418,10 +394,17 @@ const handleProtocol = async request => {
       });
     }
     try {
-      const snapshot = await loadPublicDataSnapshot();
-      return jsonResponse({
-        version: 1,
-        categories: snapshot.data.tools.filter(tool => String(tool.id || '').startsWith('custom-')),
+      const descriptor = deploymentPackage?.manifest?.files?.['custom-tools.json'];
+      await verifyBundledFile(
+        customToolsPath,
+        String(descriptor?.sha256 || manifest?.customToolsSha256 || ''),
+        'custom tools snapshot',
+      );
+      return streamFileResponse(customToolsPath, {
+        head: request.method === 'HEAD',
+        contentType: descriptor?.mimeType || 'application/json; charset=utf-8',
+        cacheControl: 'public, max-age=31536000, immutable',
+        headers: descriptor?.size ? { 'content-length': String(descriptor.size) } : {},
       });
     } catch (error) {
       startupErrorText = error && error.stack ? error.stack : String(error || 'Unknown snapshot error');
@@ -447,7 +430,7 @@ const handleProtocol = async request => {
       offlineClient: true,
       runtime: 'electron-offline-client',
       distribution: 'packaged-offline-client',
-      generatedAt: manifest?.generatedAt || '',
+      generatedAt: deploymentPackage?.manifest?.generatedAt || manifest?.generatedAt || '',
       productName: manifest?.productName || 'Payloader',
       targets: [],
       policies: {
@@ -455,6 +438,27 @@ const handleProtocol = async request => {
         security: manifest?.securityPolicy || {},
       },
     });
+  }
+
+  if (pathname === '/api/client-performance' && performanceSmokeEnabled) {
+    const metrics = app.getAppMetrics();
+    return jsonResponse({
+      processCount: metrics.length,
+      workingSetMb: metrics.reduce((total, metric) => total + metric.memory.workingSetSize, 0) / 1024,
+      privateMemoryMb: process.platform === 'win32'
+        ? metrics.reduce((total, metric) => total + (metric.memory.privateBytes || 0), 0) / 1024
+        : null,
+      cpuPercent: metrics.reduce((total, metric) => total + metric.cpu.percentCPUUsage, 0),
+      windowReadyMs,
+    });
+  }
+
+  if (pathname === '/api/client-performance/quit' && performanceSmokeEnabled) {
+    if (request.method !== 'POST') {
+      return response('Method not allowed', { status: 405, headers: { allow: 'POST' } });
+    }
+    setTimeout(() => app.quit(), 250);
+    return jsonResponse({ quitting: true });
   }
 
   if (pathname.startsWith('/api/client-build/download/')) {
@@ -480,14 +484,14 @@ const handleProtocol = async request => {
         cacheControl: asset.cacheControl || 'public, max-age=3600',
       });
     }
-    return serveAsset(asset);
+    return serveAsset(asset, request.method === 'HEAD');
   }
 
   const indexAsset = !pathname.startsWith('/api/') && !/\.[a-z0-9]{1,12}$/i.test(pathname)
     ? safeAssetPath('/index.html')
     : null;
   if (indexAsset && existsSync(indexAsset.target)) {
-    return serveAsset({ ...indexAsset, cacheControl: 'no-store' });
+    return serveAsset({ ...indexAsset, cacheControl: 'no-store' }, request.method === 'HEAD');
   }
 
   return response('Not found', { status: 404 });
@@ -510,30 +514,49 @@ const createWindow = async () => {
       webSecurity: true,
       allowRunningInsecureContent: false,
       devTools: false,
-      v8CacheOptions: 'bypassHeatCheck',
+      v8CacheOptions: 'code',
       webviewTag: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
   });
 
   guardWebContents(win.webContents);
 
   let shown = false;
+  const showFallback = setTimeout(() => {
+    if (!shown && !win.isDestroyed()) {
+      win.show();
+      shown = true;
+      windowReadyMs ??= Date.now() - processStartedAt;
+    }
+  }, 3000);
   win.once('ready-to-show', () => {
+    clearTimeout(showFallback);
     win.show();
     shown = true;
+    windowReadyMs ??= Date.now() - processStartedAt;
   });
-  // 安全超时：3秒后强制显示
-  setTimeout(() => {
-    if (!shown) { win.show(); shown = true; }
-  }, 3000);
 
   await win.loadURL(`${scheme}://${host}/`);
+  return win;
 };
 
-app.whenReady().then(async () => {
+let mainWindow = null;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  app.whenReady().then(async () => {
   app.setAppUserModelId('com.payloader.client');
   protocol.handle(scheme, handleProtocol);
   configureOfflineSession();
@@ -543,28 +566,24 @@ app.whenReady().then(async () => {
 
   try {
     await loadManifest();
-    // Pre-read hashed JS/CSS bundles into assetCache so the renderer gets them from memory
-    for (const asset of Object.values(manifest?.routes || {})) {
-      if (/[.-][0-9a-f]{8,}\.(js|css)$/i.test(asset.file || '')) {
-        const target = join(appRoot, asset.file);
-        readFile(target).then(data => assetCache.set(target, data)).catch(() => {});
-      }
-    }
-    void loadPublicDataSnapshot().catch(error => {
-      startupErrorText = error && error.stack ? error.stack : String(error || 'Unknown startup error');
-    });
   } catch (error) {
     startupErrorText = error && error.stack ? error.stack : String(error || 'Unknown startup error');
   }
 
-  await createWindow();
+  mainWindow = await createWindow();
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
+      void createWindow().then(window => {
+        mainWindow = window;
+      });
     }
   });
-});
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
