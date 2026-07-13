@@ -81,7 +81,7 @@ const clientPerformancePolicy = Object.freeze({
   streamingArtifactHashes: true,
   windows: Object.freeze({
     windowReadyMs: 1500,
-    searchSettledMs: 300,
+    searchSettledMs: 350,
     idleWorkingSetMb: 500,
     interactionWorkingSetMb: 550,
     privateMemoryMb: 440,

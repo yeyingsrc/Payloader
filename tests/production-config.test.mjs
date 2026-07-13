@@ -44,6 +44,7 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.match(performanceSmoke, /waitForReadyMetrics/);
   assert.match(performanceSmoke, /Number\.isFinite\(metrics\.windowReadyMs\)/);
   assert.match(performanceSmoke, /await new Promise\(resolve => setTimeout\(resolve, 500\)\)/);
+  assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--no-sandbox'\] : \[\]/);
   assert.match(productionBuilder, /verifyProjectAttribution/);
   assert.match(productionBuilder, /includeDist:\s*true/);
 });
@@ -85,6 +86,7 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(builder, /PAYLOADER_SHELL_WINDOWS_/);
   assert.match(builder, /PAYLOADER_SHELL_MACOS_/);
   assert.match(builder, /createClientShellTransport/);
+  assert.match(builder, /basename\(directory\) === config\.executable/);
   assert.match(merger, /validateClientShellManifest/);
   assert.match(merger, /missingTargets/);
   assert.match(shellSmoke, /validateClientShellManifest/);

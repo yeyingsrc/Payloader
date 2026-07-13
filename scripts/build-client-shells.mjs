@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -65,7 +65,7 @@ const walkDirectories = async root => {
 const findShellRoot = async (outputDir, config) => {
   const directories = await walkDirectories(outputDir);
   if (platformName === 'macos') {
-    const apps = directories.filter(directory => directory.toLowerCase().endsWith('.app'));
+    const apps = directories.filter(directory => basename(directory) === config.executable);
     if (apps.length !== 1) throw new Error(`Expected one macOS application bundle, found ${apps.length}.`);
     return apps[0];
   }

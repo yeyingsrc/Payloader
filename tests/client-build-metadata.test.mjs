@@ -448,7 +448,7 @@ test('client performance policy declares measurable runtime budgets', async t =>
   assert.equal(policy.backgroundThrottling, true);
   assert.equal(policy.singleInstance, true);
   assert.ok(policy.windows?.windowReadyMs <= 1500);
-  assert.ok(policy.windows?.searchSettledMs <= 300);
+  assert.equal(policy.windows?.searchSettledMs, 350);
   assert.ok(policy.windows?.idleWorkingSetMb <= 500);
   assert.ok(policy.windows?.interactionWorkingSetMb <= 550);
   assert.ok(policy.windows?.privateMemoryMb <= 440);

@@ -107,6 +107,7 @@ try {
   };
   const port = await getOpenPort();
   const args = [
+    ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
     ...(prepared ? [prepared.appDir] : []),
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${port}`,
@@ -121,12 +122,18 @@ try {
   client.stderr.setEncoding('utf8');
   client.stderr.on('data', chunk => stderr.push(chunk));
 
-  const target = await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-    if (!response.ok) return null;
-    const targets = await response.json();
-    return targets.find(candidate => String(candidate.url || '').startsWith('payloader://app/')) || null;
-  }, 'Payloader renderer');
+  let target;
+  try {
+    target = await waitFor(async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      if (!response.ok) return null;
+      const targets = await response.json();
+      return targets.find(candidate => String(candidate.url || '').startsWith('payloader://app/')) || null;
+    }, 'Payloader renderer');
+  } catch (error) {
+    const stderrTail = stderr.join('').trim().slice(-2_000);
+    throw new Error(`${error.message}${stderrTail ? `\nClient stderr:\n${stderrTail}` : ''}`);
+  }
   const rendererConnectedMs = Date.now() - startedAt;
 
   cdp = await connectCdp(target.webSocketDebuggerUrl);
