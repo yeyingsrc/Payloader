@@ -2,6 +2,15 @@
   "name": "payloader",
   "private": true,
   "version": "2.0.0",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/3516634930/Payloader.git"
+  },
+  "homepage": "https://github.com/3516634930/Payloader#readme",
+  "bugs": {
+    "url": "https://github.com/3516634930/Payloader/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.13.0",

@@ -167,6 +167,10 @@ jobs:
 
           Windows installers use assisted setup and let users choose the destination directory. Windows packages are Authenticode-signed and verified before publishing; new file hashes or publisher certificates may still show reputation warnings while Microsoft SmartScreen reputation accumulates. Linux AppImages can be placed in any user-writable directory; macOS apps can be dragged from the DMG to Applications or another writable folder. Linux users may need to run `chmod +x Payloader-Client-*.AppImage` after downloading. Lowercase `payloader-shell-*` archives are backend shell transports, not the primary end-user downloads.
 
+          Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+          [Code signing policy](https://github.com/3516634930/Payloader/blob/main/CODE_SIGNING_POLICY.md) | [Privacy policy](https://github.com/3516634930/Payloader/blob/main/PRIVACY.md)
+
           [Full changelog](https://github.com/$GH_REPO/commits/$RELEASE_TAG)
           EOF
           gh release edit "$RELEASE_TAG" --notes-file release-notes.md

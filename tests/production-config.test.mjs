@@ -270,3 +270,48 @@ test('public metadata does not claim an unconfigured domain or stale inventory',
   assert.doesNotMatch(robots, /^Sitemap:/im);
   assert.match(indexHtml, /安全测试知识与编解码工作台/);
 });
+
+test('public repository documents its open-source signing and privacy contract', async () => {
+  const [packageSource, lockSource, readme, license, signingPolicy, privacyPolicy, onboarding, workflow] = await Promise.all([
+    readProjectFile('package.json'),
+    readProjectFile('package-lock.json'),
+    readProjectFile('README.md'),
+    readProjectFile('LICENSE'),
+    readProjectFile('CODE_SIGNING_POLICY.md'),
+    readProjectFile('PRIVACY.md'),
+    readProjectFile('SIGNPATH_ONBOARDING.md'),
+    readProjectFile('.github/workflows/client-shells.yml'),
+  ]);
+  const packageJson = JSON.parse(packageSource);
+  const packageLock = JSON.parse(lockSource);
+  assert.equal(packageJson.license, 'AGPL-3.0-only');
+  assert.equal(packageLock.packages?.['']?.license, 'AGPL-3.0-only');
+  assert.match(packageJson.repository?.url || '', /github\.com\/3516634930\/Payloader\.git$/);
+  assert.match(license, /GNU AFFERO GENERAL PUBLIC LICENSE/);
+  assert.match(license, /Version 3, 19 November 2007/);
+  assert.match(readme, /## Code signing policy/);
+  assert.match(readme, /CODE_SIGNING_POLICY\.md/);
+  assert.match(readme, /PRIVACY\.md/);
+  assert.match(signingPolicy, /Free code signing provided by \[SignPath\.io\]/);
+  assert.match(signingPolicy, /certificate by \[SignPath Foundation\]/);
+  assert.match(signingPolicy, /Authors and committers/);
+  assert.match(signingPolicy, /Reviewers/);
+  assert.match(signingPolicy, /Approvers/);
+  assert.match(signingPolicy, /3516634930/);
+  assert.match(signingPolicy, /manual approval/i);
+  assert.match(signingPolicy, /multi-factor authentication/i);
+  assert.match(privacyPolicy, /does not collect telemetry/i);
+  assert.match(privacyPolicy, /PAYLOADER_UPDATE_CHECK_DISABLED/);
+  assert.match(privacyPolicy, /sessionStorage/);
+  assert.match(onboarding, /SIGNPATH_API_TOKEN/);
+  assert.match(onboarding, /SIGNPATH_ORGANIZATION_ID/);
+  assert.match(onboarding, /SIGNPATH_PROJECT_SLUG/);
+  assert.match(onboarding, /SIGNPATH_SIGNING_POLICY_SLUG/);
+  assert.match(onboarding, /prepared application/i);
+  assert.match(onboarding, /NSIS installer/i);
+  assert.match(onboarding, /two signing requests/i);
+  assert.match(onboarding, /manual approval/i);
+  assert.match(workflow, /Free code signing provided by SignPath\.io/);
+  assert.match(workflow, /CODE_SIGNING_POLICY\.md/);
+  assert.match(workflow, /PRIVACY\.md/);
+});
