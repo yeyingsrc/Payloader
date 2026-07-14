@@ -68,7 +68,7 @@ test('package exposes one cross-platform production quality gate on supported No
 });
 
 test('official client shells use native runners, smoke native archives, and publish one validated release manifest', async () => {
-  const [packageSource, workflow, builder, merger, shellSmoke, shellTransport, clientBuilder] = await Promise.all([
+  const [packageSource, workflow, builder, merger, shellSmoke, shellTransport, clientBuilder, windowsSignatureVerifier] = await Promise.all([
     readProjectFile('package.json'),
     readProjectFile('.github/workflows/client-shells.yml'),
     readProjectFile('scripts/build-client-shells.mjs'),
@@ -76,6 +76,7 @@ test('official client shells use native runners, smoke native archives, and publ
     readProjectFile('scripts/smoke-client-shell.mjs'),
     readProjectFile('server/client-shells.mjs'),
     readProjectFile('server/client-builder.mjs'),
+    readProjectFile('scripts/verify-windows-authenticode.ps1'),
   ]);
   const packageJson = JSON.parse(packageSource);
   assert.equal(packageJson.scripts['verify:client-shell'], 'node scripts/smoke-client-shell.mjs');
@@ -100,6 +101,8 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(workflow, /npm run verify:client-shell/);
   assert.match(workflow, /xvfb-run --auto-servernum npm run verify:client-shell/);
   assert.match(workflow, /PAYLOADER_CLIENT_PERF_PROFILE:\s*shared-runner/);
+  assert.match(workflow, /Verify Windows Authenticode trust/);
+  assert.match(workflow, /verify-windows-authenticode\.ps1/);
   assert.match(workflow, /npm run merge:client-shells/);
   assert.match(workflow, /startsWith\(github\.ref, 'refs\/tags\/v'\)/);
   assert.match(workflow, /release_tag:/);
@@ -108,6 +111,9 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(workflow, /Direct client downloads/);
   assert.match(workflow, /Payloader-Client-Setup-\$\{RELEASE_VERSION\}-x64\.exe/);
   assert.match(workflow, /Payloader-Client-\$\{RELEASE_VERSION\}-universal\.dmg/);
+  assert.match(workflow, /Windows packages are Authenticode-signed and verified before publishing/);
+  assert.match(workflow, /publisher certificates may still show reputation warnings/);
+  assert.doesNotMatch(workflow, /warnings until code-signing secrets are configured/);
   assert.match(workflow, /gh release edit "\$RELEASE_TAG" --notes-file/);
   assert.match(workflow, /gh release upload "\$RELEASE_TAG"/);
   for (const releaseAssetPattern of [
@@ -155,6 +161,11 @@ test('official client shells use native runners, smoke native archives, and publ
   assert.match(shellSmoke, /createHash\(['"]sha256['"]\)/);
   assert.match(shellSmoke, /extractTar/);
   assert.match(shellTransport, /verbatimSymlinks:\s*true/);
+  assert.match(windowsSignatureVerifier, /Get-AuthenticodeSignature/);
+  assert.match(windowsSignatureVerifier, /SignatureStatus\]::Valid/);
+  assert.match(windowsSignatureVerifier, /Payloader-Client-Setup-\*\.exe/);
+  assert.match(windowsSignatureVerifier, /payloader-shell-windows-\*\.tar\.gz/);
+  assert.match(windowsSignatureVerifier, /Get-ChildItem[\s\S]*-Filter '\*\.exe'/);
 });
 
 test('container runs the Node application as a non-root user', async () => {
