@@ -38,12 +38,14 @@ const clientShellCatalogFile = join(clientCacheRoot, 'shell-catalog.json');
 const electronMainTemplate = join(serverDir, 'client-electron-main.cjs');
 const clientDeploymentRuntimeSource = join(serverDir, 'client-deployment-runtime.cjs');
 const projectAttributionSource = join(serverDir, 'project-attribution.cjs');
+const clientInstallerIncludeSource = join(serverDir, 'client-installer.nsh');
 const clientBuilderSource = join(serverDir, 'client-builder.mjs');
 const projectPackageJson = join(rootDir, 'package.json');
 const tscCli = join(rootDir, 'node_modules', 'typescript', 'bin', 'tsc');
 const viteCli = join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js');
 const electronBuilderCli = join(rootDir, 'node_modules', 'electron-builder', 'cli.js');
 const electronPackageJson = join(rootDir, 'node_modules', 'electron', 'package.json');
+const electronRuntimeDir = join(rootDir, 'node_modules', 'electron', 'dist');
 const immutableProductionRuntime = process.env.NODE_ENV === 'production';
 const productName = 'Payloader';
 const copyright = 'Copyright (c) Payloader';
@@ -80,6 +82,10 @@ const clientPerformancePolicy = Object.freeze({
   skipsPackagedBuildPolling: true,
   streamingArtifactHashes: true,
   windowsSoftwareRendering: true,
+  windowsInstallerCompression: '7z',
+  windowsInstallerPerUser: true,
+  reusesInstalledElectronRuntime: true,
+  electronLanguages: Object.freeze(['zh-CN', 'en-US']),
   windows: Object.freeze({
     windowReadyMs: 1500,
     searchSettledMs: 350,
@@ -122,8 +128,12 @@ const clientSecurityPolicy = Object.freeze({
 const windowsNsisOptions = Object.freeze({
   oneClick: false,
   perMachine: false,
-  allowElevation: true,
+  allowElevation: false,
   allowToChangeInstallationDirectory: true,
+  packElevateHelper: false,
+  differentialPackage: false,
+  useZip: false,
+  include: 'installer.nsh',
   createDesktopShortcut: true,
   createStartMenuShortcut: true,
   runAfterFinish: false,
@@ -1158,6 +1168,7 @@ const frontendSourceFingerprint = async () => {
     electronMainTemplate,
     clientDeploymentRuntimeSource,
     projectAttributionSource,
+    clientInstallerIncludeSource,
     clientBuilderSource,
   ];
   return hashFiles([...sourceFiles, ...projectFiles]);
@@ -1239,6 +1250,7 @@ const prepareElectronApp = async (workDir, publicData) => {
   const appDir = join(workDir, 'electron-app');
   const bundledDistDir = join(appDir, 'dist');
   const bundledAppDir = join(appDir, 'app');
+  const buildResourcesDir = join(appDir, 'build');
   const deploymentPackageDir = join(workDir, 'deployment.payloader');
   const buildOutputDir = join(workDir, 'electron-output');
   const routes = {};
@@ -1250,6 +1262,7 @@ const prepareElectronApp = async (workDir, publicData) => {
 
   await mkdir(bundledDistDir, { recursive: true });
   await mkdir(bundledAppDir, { recursive: true });
+  await mkdir(buildResourcesDir, { recursive: true });
 
   const fileInfos = await Promise.all(distFiles.map(async file => {
     const relativePath = relative(distDir, file).split(pathSeparator).join('/');
@@ -1352,6 +1365,7 @@ const prepareElectronApp = async (workDir, publicData) => {
   await copyFile(electronMainTemplate, join(appDir, 'main.cjs'));
   await copyFile(clientDeploymentRuntimeSource, join(appDir, 'client-deployment-runtime.cjs'));
   await copyFile(projectAttributionSource, join(appDir, 'project-attribution.cjs'));
+  await copyFile(clientInstallerIncludeSource, join(buildResourcesDir, 'installer.nsh'));
 
   const electronVersion = await configuredElectronVersion();
   const packageInfo = await readJsonFile(projectPackageJson, {});
@@ -1376,8 +1390,11 @@ const prepareElectronApp = async (workDir, publicData) => {
       productName,
       copyright,
       electronVersion,
+      electronDist: electronRuntimeDir,
+      electronLanguages: clientPerformancePolicy.electronLanguages,
       directories: {
         output: buildOutputDir,
+        buildResources: buildResourcesDir,
       },
       files: [
         'main.cjs',
@@ -1695,7 +1712,7 @@ const runBuild = async started => {
           buildSource === 'official-shell'
             ? 'The server replaces only the external deployment package and does not rebuild the official shell.'
             : target.platform === 'windows'
-            ? 'NSIS uses normal compression and does not auto-launch after install.'
+            ? 'NSIS uses a compact 7z payload, keeps only supported Electron locales, skips the install-scope page, and does not auto-launch after install.'
             : target.platform === 'linux'
               ? `${target.format} uses faster package compression where supported.`
               : 'macOS DMG packaging is generated on macOS so signing and notarization can be handled by the host.',

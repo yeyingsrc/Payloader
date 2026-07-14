@@ -418,17 +418,23 @@ test('packaged Windows client uses software rendering without mouse capture APIs
   assert.match(builderSource, /windowsSoftwareRendering:\s*true/);
 });
 
-test('Windows assisted installers allow every architecture to choose an installation directory', { concurrency: false }, async t => {
+test('Windows assisted installers use the fast per-user path and allow every architecture to choose a directory', { concurrency: false }, async t => {
   const temp = await makeTempBuildRoot('windows-installer-options');
   t.after(() => rm(temp.root, { recursive: true, force: true }));
   const builder = await importBuilder(temp.buildRoot, 'windows-installer-options');
   const nsis = builder.__clientBuildTest.windowsNsisOptions;
   const windowsTargets = builder.__clientBuildTest.targetMatrix.filter(target => target.platform === 'windows');
+  const installerInclude = await readFile(new URL('../server/client-installer.nsh', import.meta.url), 'utf8');
 
   assert.equal(nsis.oneClick, false);
   assert.equal(nsis.perMachine, false);
-  assert.equal(nsis.allowElevation, true);
+  assert.equal(nsis.allowElevation, false);
   assert.equal(nsis.allowToChangeInstallationDirectory, true);
+  assert.equal(nsis.packElevateHelper, false);
+  assert.equal(nsis.differentialPackage, false);
+  assert.equal(nsis.useZip, false);
+  assert.equal(nsis.include, 'installer.nsh');
+  assert.match(installerInclude, /!macro\s+customInstallMode[\s\S]*StrCpy\s+\$isForceCurrentInstall\s+"1"[\s\S]*!macroend/);
   assert.equal(windowsTargets.length, 3);
   for (const target of windowsTargets) {
     assert.equal(target.installType, 'Assisted NSIS installer with custom directory');
@@ -492,6 +498,10 @@ test('client performance policy declares measurable runtime budgets', async t =>
   assert.equal(policy.backgroundThrottling, true);
   assert.equal(policy.singleInstance, true);
   assert.equal(policy.windowsSoftwareRendering, true);
+  assert.equal(policy.windowsInstallerCompression, '7z');
+  assert.equal(policy.windowsInstallerPerUser, true);
+  assert.equal(policy.reusesInstalledElectronRuntime, true);
+  assert.deepEqual(policy.electronLanguages, ['zh-CN', 'en-US']);
   assert.ok(policy.windows?.windowReadyMs <= 1500);
   assert.equal(policy.windows?.searchSettledMs, 350);
   assert.ok(policy.windows?.idleWorkingSetMb <= 500);
