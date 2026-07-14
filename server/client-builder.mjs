@@ -46,6 +46,10 @@ const viteCli = join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js');
 const electronBuilderCli = join(rootDir, 'node_modules', 'electron-builder', 'cli.js');
 const electronPackageJson = join(rootDir, 'node_modules', 'electron', 'package.json');
 const electronRuntimeDir = join(rootDir, 'node_modules', 'electron', 'dist');
+const electronRuntimeConfig = runtimeDir => {
+  const stats = statSync(runtimeDir, { throwIfNoEntry: false });
+  return stats?.isDirectory() ? { electronDist: runtimeDir } : {};
+};
 const immutableProductionRuntime = process.env.NODE_ENV === 'production';
 const productName = 'Payloader';
 const copyright = 'Copyright (c) Payloader';
@@ -84,7 +88,7 @@ const clientPerformancePolicy = Object.freeze({
   windowsSoftwareRendering: true,
   windowsInstallerCompression: '7z',
   windowsInstallerPerUser: true,
-  reusesInstalledElectronRuntime: true,
+  reusesInstalledElectronRuntimeWhenAvailable: true,
   electronLanguages: Object.freeze(['zh-CN', 'en-US']),
   windows: Object.freeze({
     windowReadyMs: 1500,
@@ -1390,7 +1394,7 @@ const prepareElectronApp = async (workDir, publicData) => {
       productName,
       copyright,
       electronVersion,
-      electronDist: electronRuntimeDir,
+      ...electronRuntimeConfig(electronRuntimeDir),
       electronLanguages: clientPerformancePolicy.electronLanguages,
       directories: {
         output: buildOutputDir,
@@ -1973,6 +1977,7 @@ export const __clientBuildTest = Object.freeze({
   }),
   freshnessCacheTtlMs,
   performancePolicy: clientPerformancePolicy,
+  electronRuntimeConfig,
   targetMatrix: clientTargetMatrix,
   windowsNsisOptions,
   prepareElectronApp,

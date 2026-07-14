@@ -500,8 +500,9 @@ test('client performance policy declares measurable runtime budgets', async t =>
   assert.equal(policy.windowsSoftwareRendering, true);
   assert.equal(policy.windowsInstallerCompression, '7z');
   assert.equal(policy.windowsInstallerPerUser, true);
-  assert.equal(policy.reusesInstalledElectronRuntime, true);
+  assert.equal(policy.reusesInstalledElectronRuntimeWhenAvailable, true);
   assert.deepEqual(policy.electronLanguages, ['zh-CN', 'en-US']);
+  assert.deepEqual(builder.__clientBuildTest.electronRuntimeConfig(join(temp.root, 'missing-electron-dist')), {});
   assert.ok(policy.windows?.windowReadyMs <= 1500);
   assert.equal(policy.windows?.searchSettledMs, 350);
   assert.ok(policy.windows?.idleWorkingSetMb <= 500);
