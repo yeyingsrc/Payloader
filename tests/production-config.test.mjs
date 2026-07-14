@@ -53,6 +53,11 @@ test('package exposes one cross-platform production quality gate on supported No
   assert.match(performanceSmoke, /process\.platform === 'linux' \? \['--disable-gpu', '--disable-dev-shm-usage'\] : \[\]/);
   assert.match(performanceSmoke, /sharedRunnerPerformancePolicy/);
   assert.match(performanceSmoke, /PAYLOADER_CLIENT_PERF_PROFILE/);
+  assert.match(performanceSmoke, /hardwareAccelerationEnabled/);
+  assert.match(performanceSmoke, /typeof metrics\.hardwareAccelerationEnabled !== ['"]boolean['"]/);
+  assert.match(performanceSmoke, /platformKey !== ['"]windows['"] \|\| result\.metrics\.hardwareAccelerationEnabled === false/);
+  assert.match(performanceSmoke, /Input\.dispatchMouseEvent/);
+  assert.match(performanceSmoke, /document\.activeElement/);
   assert.match(performanceSmoke, /const rendererStateTimeoutMs = performanceProfile === 'shared-runner'/);
   assert.match(performanceSmoke, /smokeResult\.exceptionDetails/);
   assert.match(performanceSmoke, /Renderer performance smoke failed/);

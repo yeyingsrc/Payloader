@@ -171,6 +171,59 @@ try {
 
   cdp = await connectCdp(target.webSocketDebuggerUrl);
   await cdp.send('Runtime.enable');
+  const focusPointResult = await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      const waitFor = async (predicate, timeout = ${rendererStateTimeoutMs}) => {
+        const started = performance.now();
+        while (!predicate()) {
+          if (performance.now() - started > timeout) throw new Error('Timed out waiting for renderer input');
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      };
+      await waitFor(() => document.querySelector('.search-input') && !document.body.innerText.includes('正在加载数据'));
+      const input = document.querySelector('.search-input');
+      input.scrollIntoView({ block: 'center', inline: 'center' });
+      const rect = input.getBoundingClientRect();
+      return {
+        x: rect.left + Math.min(24, Math.max(1, rect.width / 2)),
+        y: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
+      };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (focusPointResult.exceptionDetails) {
+    const rendererError = focusPointResult.exceptionDetails.exception?.description
+      || focusPointResult.exceptionDetails.text
+      || 'Unknown renderer exception';
+    throw new Error(`Renderer mouse-input smoke failed: ${rendererError}`);
+  }
+  const focusPoint = focusPointResult.result?.value;
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: focusPoint.x,
+    y: focusPoint.y,
+    button: 'none',
+  });
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: focusPoint.x,
+    y: focusPoint.y,
+    button: 'left',
+    clickCount: 1,
+  });
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: focusPoint.x,
+    y: focusPoint.y,
+    button: 'left',
+    clickCount: 1,
+  });
+  const focusVerification = await cdp.send('Runtime.evaluate', {
+    expression: `document.activeElement?.matches('.search-input') === true`,
+    returnByValue: true,
+  });
+  assertBudget(focusVerification.result?.value === true, 'Mouse input did not focus the search box.');
   const smokeResult = await cdp.send('Runtime.evaluate', {
     expression: `(async () => {
       const waitFor = async (predicate, timeout = ${rendererStateTimeoutMs}) => {
@@ -193,9 +246,13 @@ try {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
       const readMetrics = async () => (await fetch('/api/client-performance')).json();
       const waitForReadyMetrics = async (timeout = 5000) => {
+        const requireHardwareAccelerationStatus = ${platformKey === 'windows'};
         const started = performance.now();
         let metrics = await readMetrics();
-        while (!Number.isFinite(metrics.windowReadyMs)) {
+        while (
+          !Number.isFinite(metrics.windowReadyMs)
+          || (requireHardwareAccelerationStatus && typeof metrics.hardwareAccelerationEnabled !== 'boolean')
+        ) {
           if (performance.now() - started > timeout) throw new Error('Timed out waiting for ready-to-show metrics');
           await new Promise(resolve => setTimeout(resolve, 50));
           metrics = await readMetrics();
@@ -278,6 +335,7 @@ try {
     privateMemoryMb: result.metrics.privateMemoryMb === null ? null : Number(result.metrics.privateMemoryMb.toFixed(1)),
     privateMemoryGrowthMb: privateMemoryGrowthMb === null ? null : Number(privateMemoryGrowthMb.toFixed(1)),
     idleCpuPercent: Number(result.metrics.cpuPercent.toFixed(2)),
+    hardwareAccelerationEnabled: result.metrics.hardwareAccelerationEnabled,
     processCount: result.metrics.processCount,
     secondInstanceExitMs,
     payloads: result.payloads,
@@ -298,6 +356,10 @@ try {
     assertBudget(result.metrics.privateMemoryMb <= policy.privateMemoryMb, `Private memory ${result.metrics.privateMemoryMb.toFixed(1)}MB exceeds ${policy.privateMemoryMb}MB.`);
     assertBudget(privateMemoryGrowthMb <= policy.privateMemoryGrowthMb, `Repeated search grew private memory by ${privateMemoryGrowthMb.toFixed(1)}MB, exceeding ${policy.privateMemoryGrowthMb}MB.`);
   }
+  assertBudget(
+    platformKey !== 'windows' || result.metrics.hardwareAccelerationEnabled === false,
+    'Windows client hardware acceleration must stay disabled for input compatibility.',
+  );
   assertBudget(result.metrics.cpuPercent <= policy.idleCpuPercentOneCore, `Idle CPU ${result.metrics.cpuPercent.toFixed(2)}% exceeds ${policy.idleCpuPercentOneCore}%.`);
   assertBudget(!stderr.join('').includes('Unrecognized Content-Security-Policy'), 'Client emitted an invalid CSP warning.');
 

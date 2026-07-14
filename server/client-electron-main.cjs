@@ -31,7 +31,16 @@ const guardedWebContents = new WeakSet();
 const performanceSmokeEnabled = process.env.PAYLOADER_CLIENT_PERF_SMOKE === '1';
 const processStartedAt = Date.now();
 let windowReadyMs = null;
+let hardwareAccelerationEnabled = null;
 let deploymentPackage = null;
+
+// Software compositing avoids GPU-driver and remote-desktop input stalls on Windows.
+if (process.platform === 'win32') {
+  app.disableHardwareAcceleration();
+}
+app.once('gpu-info-update', () => {
+  hardwareAccelerationEnabled = app.isHardwareAccelerationEnabled();
+});
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -449,6 +458,7 @@ const handleProtocol = async request => {
         ? metrics.reduce((total, metric) => total + (metric.memory.privateBytes || 0), 0) / 1024
         : null,
       cpuPercent: metrics.reduce((total, metric) => total + metric.cpu.percentCPUUsage, 0),
+      hardwareAccelerationEnabled,
       windowReadyMs,
     });
   }

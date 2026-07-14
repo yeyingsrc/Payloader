@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const importBuilder = async (buildRoot, label) => {
   process.env.PAYLOADER_CLIENT_BUILD_ROOT = buildRoot;
@@ -391,6 +392,49 @@ test('packaged client enables background throttling and prevents duplicate insta
   assert.doesNotMatch(electronSource, /navigate-to/);
 });
 
+test('packaged Windows client uses software rendering without mouse capture APIs', async () => {
+  const electronSource = await readFile(new URL('../server/client-electron-main.cjs', import.meta.url), 'utf8');
+  const builderSource = await readFile(new URL('../server/client-builder.mjs', import.meta.url), 'utf8');
+  const rendererRoot = fileURLToPath(new URL('../src/', import.meta.url));
+  const rendererFiles = (await readdir(rendererRoot, { recursive: true }))
+    .filter(file => /\.(?:css|js|jsx|ts|tsx)$/.test(file));
+  const rendererSource = (await Promise.all(
+    rendererFiles.map(file => readFile(join(rendererRoot, file), 'utf8')),
+  )).join('\n');
+
+  assert.match(
+    electronSource,
+    /process\.platform === ['"]win32['"][\s\S]{0,160}app\.disableHardwareAcceleration\(\)/,
+  );
+  assert.match(
+    electronSource,
+    /app\.(?:on|once)\(['"]gpu-info-update['"][\s\S]{0,160}hardwareAccelerationEnabled\s*=\s*app\.isHardwareAccelerationEnabled\(\)/,
+  );
+  assert.match(electronSource, /hardwareAccelerationEnabled,\s*\n\s*windowReadyMs/);
+  assert.doesNotMatch(
+    `${electronSource}\n${rendererSource}`,
+    /requestPointerLock|exitPointerLock|setPointerCapture|releasePointerCapture|setIgnoreMouseEvents|cursor:\s*none/,
+  );
+  assert.match(builderSource, /windowsSoftwareRendering:\s*true/);
+});
+
+test('Windows assisted installers allow every architecture to choose an installation directory', { concurrency: false }, async t => {
+  const temp = await makeTempBuildRoot('windows-installer-options');
+  t.after(() => rm(temp.root, { recursive: true, force: true }));
+  const builder = await importBuilder(temp.buildRoot, 'windows-installer-options');
+  const nsis = builder.__clientBuildTest.windowsNsisOptions;
+  const windowsTargets = builder.__clientBuildTest.targetMatrix.filter(target => target.platform === 'windows');
+
+  assert.equal(nsis.oneClick, false);
+  assert.equal(nsis.perMachine, false);
+  assert.equal(nsis.allowElevation, true);
+  assert.equal(nsis.allowToChangeInstallationDirectory, true);
+  assert.equal(windowsTargets.length, 3);
+  for (const target of windowsTargets) {
+    assert.equal(target.installType, 'Assisted NSIS installer with custom directory');
+  }
+});
+
 test('client build subprocess environment excludes server and host secrets', async t => {
   const temp = await makeTempBuildRoot('environment-isolation');
   t.after(() => rm(temp.root, { recursive: true, force: true }));
@@ -447,6 +491,7 @@ test('client performance policy declares measurable runtime budgets', async t =>
   assert.equal(policy.boundsMainProcessAssetCache, true);
   assert.equal(policy.backgroundThrottling, true);
   assert.equal(policy.singleInstance, true);
+  assert.equal(policy.windowsSoftwareRendering, true);
   assert.ok(policy.windows?.windowReadyMs <= 1500);
   assert.equal(policy.windows?.searchSettledMs, 350);
   assert.ok(policy.windows?.idleWorkingSetMb <= 500);

@@ -161,7 +161,7 @@ jobs:
           | Linux ARM64 | [Download AppImage](https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/Payloader-Client-${RELEASE_VERSION}-arm64.AppImage) |
           | macOS Intel + Apple Silicon | [Download Universal DMG](https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/Payloader-Client-${RELEASE_VERSION}-universal.dmg) |
 
-          Linux users may need to run `chmod +x Payloader-Client-*.AppImage` after downloading. Lowercase `payloader-shell-*` archives are backend shell transports, not the primary end-user downloads. Packages may show platform reputation warnings until code-signing secrets are configured.
+          Windows installers use assisted setup and let users choose the destination directory. Linux AppImages can be placed in any user-writable directory; macOS apps can be dragged from the DMG to Applications or another writable folder. Linux users may need to run `chmod +x Payloader-Client-*.AppImage` after downloading. Lowercase `payloader-shell-*` archives are backend shell transports, not the primary end-user downloads. Packages may show platform reputation warnings until code-signing secrets are configured.
 
           [Full changelog](https://github.com/$GH_REPO/commits/$RELEASE_TAG)
           EOF

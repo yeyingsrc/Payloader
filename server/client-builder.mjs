@@ -79,6 +79,7 @@ const clientPerformancePolicy = Object.freeze({
   singleInstance: true,
   skipsPackagedBuildPolling: true,
   streamingArtifactHashes: true,
+  windowsSoftwareRendering: true,
   windows: Object.freeze({
     windowReadyMs: 1500,
     searchSettledMs: 350,
@@ -118,6 +119,17 @@ const clientSecurityPolicy = Object.freeze({
   integrityHashes: true,
   note: 'False-positive reduction is handled through code signing, stable metadata, transparent artifact hashes, least privilege, and a locked offline network policy. Project attribution uses a narrow authenticated-encryption module; executable packing, security-software evasion, injection, and stealth behavior are not added.',
 });
+const windowsNsisOptions = Object.freeze({
+  oneClick: false,
+  perMachine: false,
+  allowElevation: true,
+  allowToChangeInstallationDirectory: true,
+  createDesktopShortcut: true,
+  createStartMenuShortcut: true,
+  runAfterFinish: false,
+  deleteAppDataOnUninstall: false,
+  artifactName: 'Payloader-Client-Setup-${version}-${arch}.${ext}',
+});
 const crossPlatformOverride = process.env.PAYLOADER_CLIENT_FORCE_CROSS_PLATFORM === 'true';
 const clientTargetMatrix = Object.freeze([
   {
@@ -136,7 +148,7 @@ const clientTargetMatrix = Object.freeze([
     recommended: true,
     cpuFamily: 'x86_64',
     minOsVersion: 'Windows 10/11 64-bit',
-    installType: 'Per-user NSIS installer',
+    installType: 'Assisted NSIS installer with custom directory',
   },
   {
     id: 'win-arm64-nsis',
@@ -154,7 +166,7 @@ const clientTargetMatrix = Object.freeze([
     recommended: true,
     cpuFamily: 'ARM64',
     minOsVersion: 'Windows 11 ARM64',
-    installType: 'Per-user NSIS installer',
+    installType: 'Assisted NSIS installer with custom directory',
   },
   {
     id: 'win-ia32-nsis',
@@ -172,7 +184,7 @@ const clientTargetMatrix = Object.freeze([
     recommended: false,
     cpuFamily: 'x86 32-bit',
     minOsVersion: 'Windows 10 32-bit',
-    installType: 'Per-user NSIS installer',
+    installType: 'Assisted NSIS installer with custom directory',
   },
   {
     id: 'linux-x64-appimage',
@@ -1419,16 +1431,7 @@ const prepareElectronApp = async (workDir, publicData) => {
         artifactName: 'Payloader-Client-${version}-${arch}.${ext}',
         sign: false,
       },
-      nsis: {
-        oneClick: true,
-        perMachine: false,
-        allowElevation: false,
-        createDesktopShortcut: true,
-        createStartMenuShortcut: true,
-        runAfterFinish: false,
-        deleteAppDataOnUninstall: false,
-        artifactName: 'Payloader-Client-Setup-${version}-${arch}.${ext}',
-      },
+      nsis: windowsNsisOptions,
     },
   };
   await writeJsonFile(join(appDir, 'package.json'), appPackage);
@@ -1953,6 +1956,8 @@ export const __clientBuildTest = Object.freeze({
   }),
   freshnessCacheTtlMs,
   performancePolicy: clientPerformancePolicy,
+  targetMatrix: clientTargetMatrix,
+  windowsNsisOptions,
   prepareElectronApp,
   buildPublicDataSnapshot,
   createBuildEnvironment,
